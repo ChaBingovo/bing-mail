@@ -1,0 +1,27 @@
+name = "bingmail"
+main = "packages/worker/src/index.ts"
+compatibility_date = "2026-05-25"
+
+[[send_email]]
+name = "EMAIL"
+
+[vars]
+HTML_INLINE_LIMIT = "102400"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bingmail"
+database_id = "REPLACE_ME"
+
+[[r2_buckets]]
+binding = "MAIL_BUCKET"
+bucket_name = "bingmail-mail"
+
+[[queues.producers]]
+binding = "PARSE_QUEUE"
+queue = "bingmail-parse"
+
+[[queues.consumers]]
+queue = "bingmail-parse"
+max_batch_size = 1
+max_batch_timeout = 1

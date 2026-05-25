@@ -1,0 +1,19 @@
+{
+  "name": "bingmail",
+  "private": true,
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260525.0",
+    "drizzle-kit": "^0.31.4",
+    "drizzle-orm": "^0.44.2",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "dev:worker": "bun --cwd packages/worker dev",
+    "deploy:worker": "bun --cwd packages/worker deploy",
+    "dev:web": "bun --cwd apps/web dev",
+    "build:web": "bun --cwd apps/web build",
+    "typecheck": "bun --cwd packages/worker typecheck && bun --cwd apps/web typecheck",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun --cwd packages/worker db:migrate"
+  }
+}
