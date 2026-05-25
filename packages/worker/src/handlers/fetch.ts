@@ -35,7 +35,12 @@ function isValidUsername(username: string) {
   return /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
+function hasJwtSecret(env: Env) {
+  return typeof env.JWT_SECRET === "string" && env.JWT_SECRET.length > 0;
+}
+
 async function requireAuth(request: Request, env: Env) {
+  if (!hasJwtSecret(env)) return null;
   const token = getBearerToken(request);
   if (!token) return null;
   const payload = await verifyJwt(token, env.JWT_SECRET);
@@ -50,6 +55,7 @@ export async function handleFetch(request: Request, env: Env) {
   const pathname = url.pathname;
 
   if (pathname === "/api/auth/register" && request.method === "POST") {
+    if (!hasJwtSecret(env)) return json({ error: "server_misconfigured" }, { status: 500 });
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
@@ -77,6 +83,7 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/auth/login" && request.method === "POST") {
+    if (!hasJwtSecret(env)) return json({ error: "server_misconfigured" }, { status: 500 });
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 

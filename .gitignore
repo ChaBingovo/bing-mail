@@ -4,6 +4,8 @@ dist
 .DS_Store
 .env
 .env.*
+.dev.vars
+.dev.vars.*
 bun.lock
 bun.lockb
 agenta.md
