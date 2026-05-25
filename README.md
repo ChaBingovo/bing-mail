@@ -58,8 +58,9 @@ bun run deploy:worker
 
 - `CLOUDFLARE_API_TOKEN`：具有 Workers 部署权限的 API Token
 - `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID
+- `JWT_SECRET`：登录态签名密钥（会由工作流同步到 Cloudflare Worker Secret）
 
-推送到 `main` 分支会自动部署。
+第一次需要在 Actions 页面手动运行一次该工作流（用于“解锁”自动部署）；之后每次推送到 `main` 分支会自动部署。
 
 ### 仪表盘部署（不走本地 Wrangler）
 
