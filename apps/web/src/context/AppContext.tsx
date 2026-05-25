@@ -3,11 +3,15 @@ import type { AuthUser } from "../types";
 import { createApiClient } from "../services/api";
 import { getJson, getString, removeKey, setJson, setString } from "../services/storage";
 
-export type AppMode = "guest" | "anon" | "user";
+export type AppMode = "guest" | "user";
+
+export type AppPage = "inbox" | "settings" | "admin";
 
 export type AppContextValue = {
   mode: () => AppMode;
   setMode: (v: AppMode) => void;
+  page: () => AppPage;
+  setPage: (v: AppPage) => void;
   token: () => string | null;
   currentUser: () => AuthUser | null;
   activeAddress: () => string;
@@ -18,14 +22,13 @@ export type AppContextValue = {
   setUnseen: (address: string, count: number) => void;
   login: (user: AuthUser, token: string) => void;
   logout: () => void;
-  enterAnon: () => void;
   toGuest: () => void;
   api: ReturnType<typeof createApiClient>;
 };
 
 const TOKEN_KEY = "bingmail.token";
 const USER_KEY = "bingmail.user";
-const MODE_KEY = "bingmail.mode";
+const PAGE_KEY = "bingmail.page";
 
 const Ctx = createContext<AppContextValue>();
 
@@ -34,35 +37,38 @@ export function AppProvider(props: { children: any }) {
   const [currentUser, setCurrentUser] = createSignal<AuthUser | null>(getJson<AuthUser>(USER_KEY));
   const initialMode = ((): AppMode => {
     if (token() && currentUser()) return "user";
-    const saved = getString(MODE_KEY);
-    if (saved === "anon") return "anon";
     return "guest";
   })();
   const [mode, setMode] = createSignal<AppMode>(initialMode);
 
   const mailboxKey = createMemo(() => {
-    const m = mode();
-    if (m === "user") return `bingmail.mailbox.user.${currentUser()?.id || "unknown"}`;
+    if (mode() === "user") return `bingmail.mailbox.user.${currentUser()?.id || "unknown"}`;
     return "bingmail.mailbox";
   });
 
   const selectedKey = createMemo(() => {
-    const m = mode();
-    if (m === "user") return `bingmail.selected.user.${currentUser()?.id || "unknown"}`;
+    if (mode() === "user") return `bingmail.selected.user.${currentUser()?.id || "unknown"}`;
     return "bingmail.selected";
+  });
+
+  const pageKey = createMemo(() => {
+    if (mode() === "user") return `${PAGE_KEY}.user.${currentUser()?.id || "unknown"}`;
+    return PAGE_KEY;
   });
 
   const [activeAddress, _setActiveAddress] = createSignal(getString(mailboxKey()) || "");
   const [selectedId, _setSelectedId] = createSignal<string | null>(getString(selectedKey()) || null);
   const [unseenByMailbox, setUnseenByMailbox] = createSignal<Record<string, number>>({});
+  const [page, _setPage] = createSignal<AppPage>((getString(pageKey()) as AppPage) || "inbox");
 
   const toGuest = () => {
     removeKey(TOKEN_KEY);
     removeKey(USER_KEY);
     setToken(null);
     setCurrentUser(null);
-    setString(MODE_KEY, "guest");
     setMode("guest");
+    setString(pageKey(), "inbox");
+    _setPage("inbox");
   };
 
   const api = createApiClient(() => token(), toGuest);
@@ -84,27 +90,29 @@ export function AppProvider(props: { children: any }) {
     setUnseenByMailbox((m) => ({ ...m, [addr]: Math.max(count || 0, 0) }));
   };
 
+  const setPage = (v: AppPage) => {
+    _setPage(v);
+    setString(pageKey(), v);
+  };
+
   const login = (user: AuthUser, tokenValue: string) => {
     setJson(USER_KEY, user);
     setString(TOKEN_KEY, tokenValue);
-    setString(MODE_KEY, "user");
     setCurrentUser(user);
     setToken(tokenValue);
     setMode("user");
+    setPage("inbox");
   };
 
   const logout = () => {
     toGuest();
   };
 
-  const enterAnon = () => {
-    setString(MODE_KEY, "anon");
-    setMode("anon");
-  };
-
   const value: AppContextValue = {
     mode,
     setMode,
+    page,
+    setPage,
     token,
     currentUser,
     activeAddress,
@@ -115,7 +123,6 @@ export function AppProvider(props: { children: any }) {
     setUnseen,
     login,
     logout,
-    enterAnon,
     toGuest,
     api,
   };
@@ -128,4 +135,3 @@ export function useApp() {
   if (!v) throw new Error("AppContextMissing");
   return v;
 }
-

@@ -1,6 +1,7 @@
 export type JwtPayload = {
   sub: string;
   username?: string;
+  isAdmin?: boolean;
   exp: number;
 };
 
@@ -78,6 +79,7 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   const sub = (payload as any).sub;
   const exp = (payload as any).exp;
   const username = (payload as any).username;
+  const isAdmin = (payload as any).isAdmin;
   if (typeof sub !== "string" || typeof exp !== "number") return null;
 
   const now = Math.floor(Date.now() / 1000);
@@ -87,6 +89,7 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
     sub,
     exp,
     username: typeof username === "string" ? username : undefined,
+    isAdmin: typeof isAdmin === "boolean" ? isAdmin : undefined,
   };
 }
 

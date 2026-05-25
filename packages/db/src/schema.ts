@@ -5,6 +5,7 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   username: text("username").notNull(),
   passwordHash: text("password_hash").notNull(),
+  isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
@@ -28,6 +29,43 @@ export const mailboxes = sqliteTable(
     uniqueIndex("mailboxes_address_uq").on(t.address),
     index("mailboxes_user_id_idx").on(t.userId),
   ],
+);
+
+export const mailboxAliases = sqliteTable(
+  "mailbox_aliases",
+  {
+    id: text("id").primaryKey(),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    address: text("address").notNull(),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("mailbox_aliases_address_uq").on(t.address), index("mailbox_aliases_mailbox_id_idx").on(t.mailboxId)],
+);
+
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+});
+
+export const domains = sqliteTable(
+  "domains",
+  {
+    id: text("id").primaryKey(),
+    domain: text("domain").notNull(),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [uniqueIndex("domains_domain_uq").on(t.domain)],
 );
 
 export const blockedSenders = sqliteTable(

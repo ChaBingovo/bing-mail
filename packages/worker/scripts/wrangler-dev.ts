@@ -10,6 +10,14 @@ process.env.XDG_CACHE_HOME = resolve(xdgBase, "cache");
 process.env.XDG_STATE_HOME = resolve(xdgBase, "state");
 process.env.XDG_DATA_HOME = resolve(xdgBase, "data");
 
+const migrate = spawn("bun", ["./scripts/db-migrate.ts"], { stdio: "inherit", env: process.env });
+await new Promise<void>((resolvePromise) => {
+  migrate.on("close", (code) => {
+    if (code && code !== 0) process.exit(code);
+    resolvePromise();
+  });
+});
+
 const projectRoot = resolve(import.meta.dir, "..", "..", "..");
 const child = spawn("bunx", ["wrangler", "dev", "--local", "--cwd", projectRoot], { stdio: "inherit", env: process.env });
 await new Promise<void>((resolvePromise) => {

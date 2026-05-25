@@ -2,8 +2,8 @@ import { createSignal, Show } from "solid-js";
 
 export function LoginCard(props: {
   onLogin: (username: string, password: string) => void;
+  showRegister: boolean;
   onGoRegister: () => void;
-  onEnterAnon: () => void;
   loading: boolean;
   error: string;
 }) {
@@ -51,15 +51,13 @@ export function LoginCard(props: {
         </button>
 
         <div class="flex items-center justify-between text-xs text-zinc-500">
-          <button class="hover:text-zinc-300" onClick={props.onGoRegister}>
-            没有账号？注册
-          </button>
-          <button class="hover:text-zinc-300" onClick={props.onEnterAnon}>
-            匿名快速体验
-          </button>
+          <Show when={props.showRegister}>
+            <button class="hover:text-zinc-300" onClick={props.onGoRegister}>
+              没有账号？注册
+            </button>
+          </Show>
         </div>
       </div>
     </div>
   );
 }
-

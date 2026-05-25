@@ -1,18 +1,21 @@
-import { createSignal, Show } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 
 export function RegisterCard(props: {
-  onRegister: (username: string, password: string) => void;
+  domains: string[];
+  onRegister: (username: string, password: string, mailboxLocal: string, domain: string) => void;
   onGoLogin: () => void;
   loading: boolean;
   error: string;
 }) {
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
+  const [mailboxLocal, setMailboxLocal] = createSignal("");
+  const [domain, setDomain] = createSignal("");
 
   return (
     <div class="mx-auto w-full max-w-md rounded-xl border border-white/10 bg-zinc-950/60 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
       <div class="text-sm font-semibold tracking-wide text-zinc-100">Bingmail</div>
-      <div class="mt-1 text-xs text-zinc-500">注册一个账号，绑定并管理你的邮箱列表</div>
+      <div class="mt-1 text-xs text-zinc-500">注册一个账号，并分配一个主邮箱</div>
 
       <div class="mt-6 space-y-4">
         <div>
@@ -36,6 +39,29 @@ export function RegisterCard(props: {
           />
         </div>
 
+        <div>
+          <div class="text-xs font-medium text-zinc-400">主邮箱</div>
+          <div class="mt-2 flex gap-2">
+            <input
+              value={mailboxLocal()}
+              onInput={(e) => setMailboxLocal(e.currentTarget.value)}
+              placeholder="your_name"
+              class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            <select
+              value={domain()}
+              onChange={(e) => setDomain(e.currentTarget.value)}
+              class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            >
+              <option value="">选择域名</option>
+              <For each={props.domains}>{(d) => <option value={d}>{d}</option>}</For>
+            </select>
+          </div>
+          <Show when={props.domains.length === 0}>
+            <div class="mt-1 text-[11px] text-zinc-600">系统尚未配置域名，请联系管理员</div>
+          </Show>
+        </div>
+
         <Show when={props.error}>
           <div class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
             {props.error}
@@ -43,9 +69,9 @@ export function RegisterCard(props: {
         </Show>
 
         <button
-          disabled={props.loading}
+          disabled={props.loading || props.domains.length === 0}
           class="w-full rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
-          onClick={() => props.onRegister(username().trim(), password())}
+          onClick={() => props.onRegister(username().trim(), password(), mailboxLocal().trim(), domain())}
         >
           创建账号
         </button>
@@ -59,4 +85,3 @@ export function RegisterCard(props: {
     </div>
   );
 }
-

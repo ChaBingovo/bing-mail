@@ -25,7 +25,7 @@ export type MessageDetail = {
 };
 
 export type RedDotResponse = {
-  address: string;
+  address: string | null;
   since: number;
   newCount: number;
   latestReceivedAt: number | null;
@@ -35,4 +35,5 @@ export type RedDotResponse = {
 export type AuthUser = {
   id: string;
   username: string;
+  isAdmin?: boolean;
 };

@@ -15,12 +15,22 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const from = normalizeAddress(message.from);
 
   const mailboxRes = await env.DB.prepare(
-    "SELECT id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
+    "SELECT id, user_id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
   )
     .bind(to)
-    .first<{ id: string }>();
+    .first<{ id: string; user_id: string | null }>();
 
-  if (!mailboxRes?.id) {
+  const aliasRes = mailboxRes?.id
+    ? null
+    : await env.DB.prepare(
+        "SELECT m.id, m.user_id FROM mailbox_aliases a JOIN mailboxes m ON m.id = a.mailbox_id WHERE a.address = ?1 AND a.is_active = 1 AND m.is_active = 1 LIMIT 1",
+      )
+        .bind(to)
+        .first<{ id: string; user_id: string | null }>();
+
+  const target = mailboxRes?.id ? mailboxRes : aliasRes;
+
+  if (!target?.id || !target.user_id) {
     message.setReject("Unknown recipient");
     return;
   }
@@ -28,7 +38,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const blockRes = await env.DB.prepare(
     "SELECT 1 AS ok FROM blocked_senders WHERE mailbox_id = ?1 AND sender = ?2 LIMIT 1",
   )
-    .bind(mailboxRes.id, from)
+    .bind(target.id, from)
     .first<{ ok: 1 }>();
 
   if (blockRes?.ok) {
@@ -46,7 +56,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
       await env.DB.prepare(
         "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
       )
-        .bind(messageId, mailboxRes.id, receivedAt, rawKey)
+        .bind(messageId, target.id, receivedAt, rawKey)
         .run();
       await env.PARSE_QUEUE.send({ messageId });
     })(),

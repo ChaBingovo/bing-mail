@@ -24,13 +24,9 @@ bun run dev:worker
 bun run dev:web
 ```
 
-## 初始化白名单邮箱
+## 初始化
 
-先准备数据库结构和开发 seed，然后用默认开发用户创建白名单邮箱（示例）：
-
-```bash
-Invoke-RestMethod -Method POST -Uri http://127.0.0.1:8787/api/mailboxes -Headers @{ Authorization = "Bearer dev-token" } -ContentType "application/json" -Body '{"address":"you@example.com"}'
-```
+系统启动后会先进入初始化向导：创建管理员账户、记录域名、分配管理员主邮箱地址。每个账户仅有一个主邮箱地址，额外邮箱通过“别名”管理。
 
 ## 数据库初始化
 
@@ -50,4 +46,10 @@ bun run db:migrate
 
 ```bash
 bun run db:seed:dev
+```
+
+## 清空本地数据（从头开始）
+
+```bash
+bun --cwd packages/worker db:reset:local
 ```

@@ -3,10 +3,13 @@ import { EmailList } from "./components/EmailList";
 import { EmailViewer } from "./components/EmailViewer";
 import { LoginCard } from "./components/LoginCard";
 import { RegisterCard } from "./components/RegisterCard";
+import { SetupView } from "./components/SetupView";
 import { Sidebar } from "./components/Sidebar";
+import { AdminSettingsView } from "./components/AdminSettingsView";
+import { UserSettingsView } from "./components/UserSettingsView";
 import { AppProvider, useApp } from "./context/AppContext";
 import { VisibilityProvider, useVisibility } from "./context/VisibilityContext";
-import type { MessageDetail, MessageMeta, RedDotResponse } from "./types";
+import type { AuthUser, MessageDetail, MessageMeta, RedDotResponse } from "./types";
 
 function lastSeenKey(address: string) {
   return `bingmail.lastSeen.${address}`;
@@ -26,11 +29,38 @@ function GuestView() {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
 
+  const [setup] = createResource(async () => {
+    try {
+      const res = await fetch("/api/setup/status");
+      if (!res.ok) throw new Error(String(res.status));
+      return (await res.json()) as { initialized: boolean; allowRegister: boolean };
+    } catch {
+      return { initialized: true, allowRegister: false };
+    }
+  });
+
+  createEffect(() => {
+    if (tab() !== "register") return;
+    if (setup()?.allowRegister) return;
+    setTab("login");
+  });
+
+  const [domains] = createResource(async () => {
+    try {
+      const res = await fetch("/api/domains");
+      if (!res.ok) return [] as string[];
+      const data = (await res.json()) as { domains: string[] };
+      return Array.isArray(data.domains) ? data.domains : [];
+    } catch {
+      return [] as string[];
+    }
+  });
+
   const login = async (username: string, password: string) => {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: { id: string; username: string }; token: string }>("/api/auth/login", {
+      const data = await app.api.apiJson<{ user: AuthUser; token: string }>("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -43,18 +73,15 @@ function GuestView() {
     }
   };
 
-  const register = async (username: string, password: string) => {
+  const register = async (username: string, password: string, mailboxLocal: string, domain: string) => {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: { id: string; username: string }; token: string }>(
-        "/api/auth/register",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ username, password }),
-        },
-      );
+      const data = await app.api.apiJson<{ user: AuthUser; token: string }>("/api/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password, mailboxLocal, domain }),
+      });
       app.login(data.user, data.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
@@ -64,87 +91,94 @@ function GuestView() {
   };
 
   return (
-    <div class="flex h-dvh w-full items-center justify-center bg-zinc-950 p-6">
-      <Show
-        when={tab() === "login"}
-        fallback={<RegisterCard onRegister={register} onGoLogin={() => setTab("login")} loading={loading()} error={error()} />}
-      >
-        <LoginCard
-          onLogin={login}
-          onGoRegister={() => setTab("register")}
-          onEnterAnon={() => app.enterAnon()}
-          loading={loading()}
-          error={error()}
-        />
-      </Show>
-    </div>
+    <Show
+      when={setup.state === "ready" && setup()?.initialized === false}
+      fallback={
+        <div class="flex h-dvh w-full items-center justify-center bg-zinc-950 p-6">
+          <Show
+            when={tab() === "login"}
+            fallback={
+              <RegisterCard
+                onRegister={register}
+                domains={domains() || []}
+                onGoLogin={() => setTab("login")}
+                loading={loading()}
+                error={error()}
+              />
+            }
+          >
+            <LoginCard
+              onLogin={login}
+              showRegister={Boolean(setup()?.allowRegister)}
+              onGoRegister={() => setTab("register")}
+              loading={loading()}
+              error={error()}
+            />
+          </Show>
+        </div>
+      }
+    >
+      <SetupView onInitialized={(user, token) => app.login(user, token)} />
+    </Show>
   );
 }
 
-function ConsoleView(props: { mode: "anon" | "user" }) {
+function ConsoleView() {
   const app = useApp();
   const { isVisible } = useVisibility();
 
+  const [mailboxAddress] = createResource(
+    () => app.token(),
+    async (t) => {
+      if (!t) return null;
+      const data = await app.api.apiJson<{ address: string | null }>("/api/user/mailbox");
+      return data.address;
+    },
+  );
+
+  createEffect(() => {
+    const addr = mailboxAddress();
+    if (!addr) return;
+    if (app.activeAddress() !== addr) app.setActiveAddress(addr);
+  });
+
+  const activeOwnedAddress = createMemo(() => {
+    if (app.page() !== "inbox") return "";
+    return mailboxAddress() || "";
+  });
+
   const currentUnseen = createMemo(() => {
-    const addr = app.activeAddress();
+    const addr = activeOwnedAddress();
     if (!addr) return 0;
     return app.unseenByMailbox()[addr] ?? 0;
   });
 
-  const [publicMailboxes] = createResource(async () => {
-    try {
-      const data = await app.api.apiJson<{ mailboxes: string[] }>("/api/mailboxes");
-      return data.mailboxes;
-    } catch {
-      return [];
-    }
-  });
-
-  const [userMailboxes, { refetch: refetchUserMailboxes }] = createResource(
-    () => (app.mode() === "user" ? app.token() : null),
-    async (t) => {
-      if (!t) return [];
-      const data = await app.api.apiJson<{ mailboxes: string[] }>("/api/user/mailboxes");
-      return data.mailboxes;
-    },
-  );
-
-  const [messages, { refetch: refetchMessages }] = createResource(app.activeAddress, async (address) => {
-    if (!address) return [];
-    const data = await app.api.apiJson<{ messages: MessageMeta[] }>(
-      `/api/mailboxes/${encodeURIComponent(address)}/messages?limit=100`,
-    );
+  const [messages, { refetch: refetchMessages }] = createResource(activeOwnedAddress, async (address) => {
+    if (!address || app.page() !== "inbox") return [];
+    const data = await app.api.apiJson<{ messages: MessageMeta[] }>("/api/user/messages?limit=100");
     return data.messages;
   });
 
-  const [detail] = createResource(app.selectedId, async (id) => {
-    if (!id) return null;
+  const selectedId = createMemo(() => {
+    if (app.page() !== "inbox") return null;
+    if (!activeOwnedAddress()) return null;
+    return app.selectedId();
+  });
+
+  const [detail] = createResource(selectedId, async (id) => {
+    if (!id || app.page() !== "inbox") return null;
     const data = await app.api.apiJson<{ message: MessageDetail }>(`/api/messages/${encodeURIComponent(id)}`);
     return data.message;
   });
 
-  const [html] = createResource(app.selectedId, async (id) => {
-    if (!id) return "";
+  const [html] = createResource(selectedId, async (id) => {
+    if (!id || app.page() !== "inbox") return "";
     return app.api.apiText(`/api/messages/${encodeURIComponent(id)}/html`);
   });
 
-  const setModeDefaults = () => {
-    const m = app.mode();
-    const userId = app.currentUser()?.id || "unknown";
-    const mailboxKey = m === "user" ? `bingmail.mailbox.user.${userId}` : "bingmail.mailbox";
-    const selectedKey = m === "user" ? `bingmail.selected.user.${userId}` : "bingmail.selected";
-    const savedMailbox = localStorage.getItem(mailboxKey) || "";
-    const savedSelected = localStorage.getItem(selectedKey) || "";
-    if (savedMailbox) app.setActiveAddress(savedMailbox);
-    if (savedSelected) app.setSelectedId(savedSelected || null);
-  };
-
   createEffect(() => {
-    setModeDefaults();
-  });
-
-  createEffect(() => {
-    const addr = app.activeAddress();
+    if (app.page() !== "inbox") return;
+    const addr = activeOwnedAddress();
     const list = messages() || [];
     if (!addr || !isVisible() || list.length === 0) return;
     const max = list.reduce((acc, m) => Math.max(acc, m.receivedAt || 0), 0);
@@ -154,9 +188,9 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
   });
 
   createEffect(() => {
-    const addr = app.activeAddress();
+    if (app.page() !== "inbox") return;
+    const addr = activeOwnedAddress();
     if (!addr) return;
-    if (app.mode() === "guest") return;
 
     let stopped = false;
     let ws: WebSocket | null = null;
@@ -168,7 +202,8 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
     let lastRefetchAt = 0;
 
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = `${protocol}://${location.host}/api/ws/mailboxes/${encodeURIComponent(addr)}`;
+    const t = app.token() || "";
+    const wsUrl = `${protocol}://${location.host}/api/user/ws?token=${encodeURIComponent(t)}`;
 
     const baseInterval = () => {
       if (!isVisible()) return 20000;
@@ -195,7 +230,7 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
       const since = getLastSeen(addr);
       try {
         const data = await app.api.apiJson<RedDotResponse>(
-          `/api/mailboxes/${encodeURIComponent(addr)}/red-dot?since=${encodeURIComponent(String(since))}`,
+          `/api/user/red-dot?since=${encodeURIComponent(String(since))}`,
         );
         backoffMs = 0;
         app.setUnseen(addr, data.newCount);
@@ -285,11 +320,9 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
   });
 
   createEffect(() => {
-    const publicList = publicMailboxes() || [];
-    const mine = userMailboxes() || [];
-    const list = app.mode() === "user" ? [...mine, ...publicList] : publicList;
-    const targets = Array.from(new Set(list)).slice(0, 10);
-    if (!isVisible() || targets.length === 0) return;
+    const addr = mailboxAddress() || "";
+    const targets = addr ? [addr] : [];
+    if (app.page() !== "inbox" || !isVisible() || targets.length === 0) return;
 
     let stopped = false;
     let timer: number | null = null;
@@ -302,7 +335,7 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
           targets.map(async (addr) => {
             const since = getLastSeen(addr);
             const data = await app.api.apiJson<RedDotResponse>(
-              `/api/mailboxes/${encodeURIComponent(addr)}/red-dot?since=${encodeURIComponent(String(since))}`,
+              `/api/user/red-dot?since=${encodeURIComponent(String(since))}`,
             );
             app.setUnseen(addr, data.newCount);
           }),
@@ -325,72 +358,57 @@ function ConsoleView(props: { mode: "anon" | "user" }) {
     });
   });
 
-  const onBindToUser = async (address: string) => {
-    const addr = (address || "").trim().toLowerCase();
-    if (!addr) return;
-    await app.api.apiJson("/api/user/mailboxes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ address: addr }),
-    });
-    refetchUserMailboxes();
-  };
-
-  const onUnbindFromUser = async (address: string) => {
-    const addr = (address || "").trim().toLowerCase();
-    if (!addr) return;
-    await app.api.apiText(`/api/user/mailboxes/${encodeURIComponent(addr)}`, { method: "DELETE" });
-    refetchUserMailboxes();
-  };
-
-  createEffect(() => {
-    if (app.mode() !== "user") return;
-    const list = userMailboxes() || [];
-    if (app.activeAddress()) return;
-    if (list.length > 0) app.setActiveAddress(list[0]);
-  });
-
   return (
     <div class="h-dvh w-full overflow-hidden">
-      <div class="grid h-full grid-cols-[260px_420px_1fr] gap-0 border-zinc-800">
-        <Sidebar
-          mode={props.mode}
-          user={app.currentUser()}
-          activeAddress={app.activeAddress()}
-          setActiveAddress={app.setActiveAddress}
-          currentUnseen={currentUnseen()}
-          unseenByMailbox={app.unseenByMailbox()}
-          onRefresh={() => refetchMessages()}
-          userMailboxes={userMailboxes() || []}
-          publicMailboxes={publicMailboxes() || []}
-          onBindToUser={onBindToUser}
-          onUnbindFromUser={onUnbindFromUser}
-          onLogout={() => app.logout()}
-        />
+      <Show
+        when={app.page() === "inbox"}
+        fallback={
+          <div class="grid h-full grid-cols-[260px_1fr] gap-0 border-zinc-800">
+            <Sidebar
+              user={app.currentUser()!}
+              page={app.page()}
+              setPage={app.setPage}
+              currentUnseen={currentUnseen()}
+              onRefresh={() => refetchMessages()}
+              onLogout={() => app.logout()}
+            />
+            <Show when={app.page() === "settings"}>
+              <UserSettingsView user={app.currentUser()!} api={app.api} />
+            </Show>
+            <Show when={app.page() === "admin"}>
+              <AdminSettingsView api={app.api} />
+            </Show>
+          </div>
+        }
+      >
+        <div class="grid h-full grid-cols-[260px_420px_1fr] gap-0 border-zinc-800">
+          <Sidebar
+            user={app.currentUser()!}
+            page={app.page()}
+            setPage={app.setPage}
+            currentUnseen={currentUnseen()}
+            onRefresh={() => refetchMessages()}
+            onLogout={() => app.logout()}
+          />
 
-        <EmailList
-          mailboxAddress={app.activeAddress()}
-          messages={messages() || []}
-          loading={messages.state !== "ready"}
-          selectedId={app.selectedId()}
-          setSelectedId={(id) => app.setSelectedId(id)}
-        />
+          <EmailList
+            mailboxAddress={activeOwnedAddress()}
+            messages={messages() || []}
+            loading={messages.state !== "ready"}
+            selectedId={selectedId()}
+            setSelectedId={(id) => app.setSelectedId(id)}
+          />
 
-        <EmailViewer detail={detail() || null} html={html() || ""} />
-      </div>
+          <EmailViewer detail={detail() || null} html={html() || ""} />
+        </div>
+      </Show>
     </div>
   );
 }
 
 function Root() {
   const app = useApp();
-  return (
-    <Show when={app.mode() !== "guest"} fallback={<GuestView />}>
-      <Show when={app.mode() === "user"} fallback={<ConsoleView mode="anon" />}>
-        <ConsoleView mode="user" />
-      </Show>
-    </Show>
-  );
+  return <Show when={app.mode() === "user"} fallback={<GuestView />}><ConsoleView /></Show>;
 }
 
 export default function App() {
