@@ -58,6 +58,8 @@ export const messages = sqliteTable(
     fromName: text("from_name"),
     subject: text("subject"),
     snippet: text("snippet"),
+    aiCode: text("ai_code"),
+    aiService: text("ai_service"),
     receivedAt: integer("received_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -69,4 +71,3 @@ export const messages = sqliteTable(
   },
   (t) => [index("messages_mailbox_id_received_at_idx").on(t.mailboxId, t.receivedAt)],
 );
-

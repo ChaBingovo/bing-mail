@@ -6,3 +6,4 @@ dist
 .env.*
 bun.lock
 bun.lockb
+agenta.md

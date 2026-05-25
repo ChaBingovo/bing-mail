@@ -3,7 +3,6 @@ import {
   For,
   Show,
   createEffect,
-  createMemo,
   createResource,
   createSignal,
   onMount,
@@ -16,6 +15,8 @@ type MessageMeta = {
   fromAddress?: string | null;
   subject?: string | null;
   snippet?: string | null;
+  aiCode?: string | null;
+  aiService?: string | null;
   receivedAt?: number;
 };
 
@@ -29,6 +30,8 @@ type MessageDetail = {
   receivedAt: number;
   parsedAt: number | null;
   hasHtml: boolean;
+  aiCode: string | null;
+  aiService: string | null;
 };
 
 async function apiJson<T>(path: string): Promise<T> {
@@ -47,12 +50,6 @@ async function apiText(path: string): Promise<string> {
 function formatTime(ts: number | undefined) {
   if (!ts) return "";
   return new Date(ts).toLocaleString("zh-CN", { hour12: false });
-}
-
-function extractCode(text: string | null | undefined) {
-  if (!text) return null;
-  const m = text.match(/\b\d{4,8}\b/);
-  return m ? m[0] : null;
 }
 
 function ShadowHtml(props: { html: string }) {
@@ -103,8 +100,6 @@ export default function App() {
     if (!id) return "";
     return apiText(`/api/messages/${encodeURIComponent(id)}/html`);
   });
-
-  const activeCode = createMemo(() => extractCode(detail()?.snippet || detail()?.subject));
 
   onMount(() => {
     const savedMailbox = localStorage.getItem("bingmail.mailbox") || "";
@@ -179,7 +174,8 @@ export default function App() {
             <Show when={messages.state === "ready"} fallback={<div class="text-sm text-zinc-500">加载中…</div>}>
               <For each={messages() || []}>
                 {(m) => {
-                  const code = extractCode(m.snippet || m.subject);
+                  const code = m.aiCode;
+                  const service = m.aiService;
                   return (
                     <button
                       class="mt-2 w-full rounded-lg border border-white/5 bg-white/0 px-3 py-3 text-left hover:bg-white/5"
@@ -197,9 +193,23 @@ export default function App() {
                           {m.fromName || m.fromAddress || ""}
                         </div>
                         <Show when={code}>
-                          <span class="shrink-0 rounded-md bg-indigo-500/15 px-2 py-0.5 text-xs font-semibold text-indigo-200">
-                            {code}
-                          </span>
+                          <div class="shrink-0 flex items-baseline gap-1">
+                            <Show when={service}>
+                              <span class="rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-200">
+                                {service}
+                              </span>
+                            </Show>
+                            <span
+                              class="rounded-md bg-indigo-500/15 px-2 py-0.5 text-xs font-semibold text-indigo-200"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (code) void navigator.clipboard?.writeText(code);
+                              }}
+                            >
+                              {code}
+                            </span>
+                          </div>
                         </Show>
                       </div>
                       <Show when={m.snippet}>
@@ -227,10 +237,17 @@ export default function App() {
                     <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
                       <div class="text-zinc-400">{d().fromName || d().fromAddress || ""}</div>
                       <div class="text-zinc-600">{formatTime(d().receivedAt)}</div>
-                      <Show when={activeCode()}>
-                        <span class="rounded-md bg-indigo-500/15 px-2 py-0.5 font-semibold text-indigo-200">
-                          {activeCode()}
-                        </span>
+                      <Show when={d().aiCode}>
+                        <div class="flex items-baseline gap-1">
+                          <Show when={d().aiService}>
+                            <span class="rounded-md bg-emerald-500/15 px-2 py-0.5 font-semibold text-emerald-200">
+                              {d().aiService}
+                            </span>
+                          </Show>
+                          <span class="rounded-md bg-indigo-500/15 px-2 py-0.5 font-semibold text-indigo-200">
+                            {d().aiCode}
+                          </span>
+                        </div>
                       </Show>
                       <Show when={d().status !== "SUCCESS"}>
                         <span class="rounded-md bg-amber-500/15 px-2 py-0.5 font-medium text-amber-200">

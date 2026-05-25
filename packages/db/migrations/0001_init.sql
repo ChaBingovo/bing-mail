@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS messages (
   from_name TEXT,
   subject TEXT,
   snippet TEXT,
+  ai_code TEXT,
+  ai_service TEXT,
   received_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
   r2_raw_key TEXT NOT NULL,
   text_plain TEXT,
@@ -50,4 +52,3 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5 (
   subject,
   body_text
 );
-

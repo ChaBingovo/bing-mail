@@ -1,6 +1,11 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
 
+function isMissingAiColumnsError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("no such column: ai_code") || msg.includes("no such column: ai_service");
+}
+
 export async function handleFetch(request: Request, env: Env) {
   if (request.method === "OPTIONS") return text("", { status: 204 });
 
@@ -54,19 +59,31 @@ export async function handleFetch(request: Request, env: Env) {
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
-    const res = await env.DB.prepare(
-      "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-    )
-      .bind(mailbox.id, limit)
-      .all<{
-        id: string;
-        status: "PENDING" | "SUCCESS";
-        from_name: string | null;
-        from_address: string | null;
-        subject: string | null;
-        snippet: string | null;
-        received_at: number;
-      }>();
+    let res: D1Result<{
+      id: string;
+      status: "PENDING" | "SUCCESS";
+      from_name: string | null;
+      from_address: string | null;
+      subject: string | null;
+      snippet: string | null;
+      received_at: number;
+      ai_code?: string | null;
+      ai_service?: string | null;
+    }>;
+    try {
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit)
+        .all();
+    } catch (err) {
+      if (!isMissingAiColumnsError(err)) throw err;
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit)
+        .all();
+    }
 
     return json({
       messages: res.results.map((r) => ({
@@ -77,6 +94,8 @@ export async function handleFetch(request: Request, env: Env) {
         subject: r.subject,
         snippet: r.snippet,
         receivedAt: r.received_at,
+        aiCode: r.ai_code ?? null,
+        aiService: r.ai_service ?? null,
       })),
     });
   }
@@ -84,23 +103,35 @@ export async function handleFetch(request: Request, env: Env) {
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
   if (msgMetaMatch && request.method === "GET") {
     const id = decodeURIComponent(msgMetaMatch[1]);
-    const row = await env.DB.prepare(
-      "SELECT id, mailbox_id, status, from_name, from_address, subject, snippet, received_at, parsed_at, html_r2_key, html_inline FROM messages WHERE id = ?1 LIMIT 1",
-    )
-      .bind(id)
-      .first<{
-        id: string;
-        mailbox_id: string;
-        status: "PENDING" | "SUCCESS";
-        from_name: string | null;
-        from_address: string | null;
-        subject: string | null;
-        snippet: string | null;
-        received_at: number;
-        parsed_at: number | null;
-        html_r2_key: string | null;
-        html_inline: string | null;
-      }>();
+    let row: {
+      id: string;
+      mailbox_id: string;
+      status: "PENDING" | "SUCCESS";
+      from_name: string | null;
+      from_address: string | null;
+      subject: string | null;
+      snippet: string | null;
+      received_at: number;
+      parsed_at: number | null;
+      html_r2_key: string | null;
+      html_inline: string | null;
+      ai_code?: string | null;
+      ai_service?: string | null;
+    } | null;
+    try {
+      row = await env.DB.prepare(
+        "SELECT id, mailbox_id, status, from_name, from_address, subject, snippet, received_at, parsed_at, html_r2_key, html_inline, ai_code, ai_service FROM messages WHERE id = ?1 LIMIT 1",
+      )
+        .bind(id)
+        .first();
+    } catch (err) {
+      if (!isMissingAiColumnsError(err)) throw err;
+      row = await env.DB.prepare(
+        "SELECT id, mailbox_id, status, from_name, from_address, subject, snippet, received_at, parsed_at, html_r2_key, html_inline FROM messages WHERE id = ?1 LIMIT 1",
+      )
+        .bind(id)
+        .first();
+    }
     if (!row) return json({ error: "message_not_found" }, { status: 404 });
 
     return json({
@@ -115,6 +146,8 @@ export async function handleFetch(request: Request, env: Env) {
         receivedAt: row.received_at,
         parsedAt: row.parsed_at,
         hasHtml: Boolean(row.html_inline || row.html_r2_key),
+        aiCode: row.ai_code ?? null,
+        aiService: row.ai_service ?? null,
       },
     });
   }
@@ -165,18 +198,30 @@ export async function handleFetch(request: Request, env: Env) {
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
-    const fts = await env.DB.prepare(
-      "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC LIMIT ?3",
-    )
-      .bind(q, mailbox.id, limit)
-      .all<{
-        id: string;
-        subject: string | null;
-        from_name: string | null;
-        from_address: string | null;
-        snippet: string | null;
-        received_at: number;
-      }>();
+    let fts: D1Result<{
+      id: string;
+      subject: string | null;
+      from_name: string | null;
+      from_address: string | null;
+      snippet: string | null;
+      received_at: number;
+      ai_code?: string | null;
+      ai_service?: string | null;
+    }>;
+    try {
+      fts = await env.DB.prepare(
+        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC LIMIT ?3",
+      )
+        .bind(q, mailbox.id, limit)
+        .all();
+    } catch (err) {
+      if (!isMissingAiColumnsError(err)) throw err;
+      fts = await env.DB.prepare(
+        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC LIMIT ?3",
+      )
+        .bind(q, mailbox.id, limit)
+        .all();
+    }
 
     return json({
       messages: fts.results.map((r) => ({
@@ -186,6 +231,8 @@ export async function handleFetch(request: Request, env: Env) {
         fromAddress: r.from_address,
         snippet: r.snippet,
         receivedAt: r.received_at,
+        aiCode: r.ai_code ?? null,
+        aiService: r.ai_service ?? null,
       })),
     });
   }
