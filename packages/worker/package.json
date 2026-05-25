@@ -14,7 +14,7 @@
     "dev": "bun ./scripts/wrangler-dev.ts",
     "deploy": "wrangler deploy",
     "typecheck": "bunx tsc -p tsconfig.json",
-    "db:migrate": "wrangler d1 execute bingmail --file ../db/migrations/0001_init.sql",
-    "db:seed:dev": "wrangler d1 execute bingmail --file ../db/seeds/dev.sql"
+    "db:migrate": "bun ./scripts/db-migrate.ts",
+    "db:seed:dev": "bunx wrangler d1 execute bingmail --local --yes --file ../db/seeds/dev.sql"
   }
 }

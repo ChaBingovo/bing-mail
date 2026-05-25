@@ -1,9 +1,46 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
+import { getBearerToken, hashPassword, signJwt, verifyJwt, verifyPassword } from "../auth";
 
 function isMissingAiColumnsError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.includes("no such column: ai_code") || msg.includes("no such column: ai_service");
+}
+
+async function readJsonBody(request: Request) {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+function toUsername(body: unknown) {
+  const username =
+    typeof body === "object" && body && "username" in body && typeof (body as any).username === "string"
+      ? (body as any).username.trim()
+      : "";
+  return username;
+}
+
+function toPassword(body: unknown) {
+  const password =
+    typeof body === "object" && body && "password" in body && typeof (body as any).password === "string"
+      ? (body as any).password
+      : "";
+  return password;
+}
+
+function isValidUsername(username: string) {
+  return /^[a-zA-Z0-9_]{3,32}$/.test(username);
+}
+
+async function requireAuth(request: Request, env: Env) {
+  const token = getBearerToken(request);
+  if (!token) return null;
+  const payload = await verifyJwt(token, env.JWT_SECRET);
+  if (!payload) return null;
+  return payload;
 }
 
 export async function handleFetch(request: Request, env: Env) {
@@ -11,6 +48,113 @@ export async function handleFetch(request: Request, env: Env) {
 
   const url = new URL(request.url);
   const pathname = url.pathname;
+
+  if (pathname === "/api/auth/register" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const username = toUsername(body);
+    const password = toPassword(body);
+    if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
+    if (typeof password !== "string" || password.length < 8 || password.length > 72) {
+      return json({ error: "invalid_password" }, { status: 400 });
+    }
+
+    const existing = await env.DB.prepare("SELECT id FROM users WHERE username = ?1 LIMIT 1")
+      .bind(username)
+      .first<{ id: string }>();
+    if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
+
+    const id = crypto.randomUUID();
+    const passwordHash = await hashPassword(password);
+    await env.DB.prepare("INSERT INTO users (id, username, password_hash) VALUES (?1, ?2, ?3)")
+      .bind(id, username, passwordHash)
+      .run();
+
+    const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+    const token = await signJwt({ sub: id, username, exp }, env.JWT_SECRET);
+    return json({ user: { id, username }, token }, { status: 201 });
+  }
+
+  if (pathname === "/api/auth/login" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const username = toUsername(body);
+    const password = toPassword(body);
+    if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
+    if (typeof password !== "string" || password.length < 1) return json({ error: "invalid_password" }, { status: 400 });
+
+    const user = await env.DB.prepare("SELECT id, password_hash FROM users WHERE username = ?1 LIMIT 1")
+      .bind(username)
+      .first<{ id: string; password_hash: string }>();
+    if (!user?.id) return json({ error: "unauthorized" }, { status: 401 });
+    const ok = await verifyPassword(password, user.password_hash);
+    if (!ok) return json({ error: "unauthorized" }, { status: 401 });
+
+    const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+    const token = await signJwt({ sub: user.id, username, exp }, env.JWT_SECRET);
+    return json({ user: { id: user.id, username }, token });
+  }
+
+  if (pathname === "/api/user/mailboxes" && request.method === "GET") {
+    const auth = await requireAuth(request, env);
+    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+
+    const res = await env.DB.prepare(
+      "SELECT address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 ORDER BY created_at DESC",
+    )
+      .bind(auth.sub)
+      .all<{ address: string }>();
+    return json({ mailboxes: res.results.map((r) => r.address) });
+  }
+
+  if (pathname === "/api/user/mailboxes" && request.method === "POST") {
+    const auth = await requireAuth(request, env);
+    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+
+    const body = await readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+    const address =
+      typeof body === "object" && body && "address" in body && typeof (body as any).address === "string"
+        ? (body as any).address.trim().toLowerCase()
+        : "";
+    if (!address || !address.includes("@")) return json({ error: "invalid_address" }, { status: 400 });
+
+    const existing = await env.DB.prepare("SELECT id, user_id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1")
+      .bind(address)
+      .first<{ id: string; user_id: string | null }>();
+    if (existing?.id) {
+      if (existing.user_id && existing.user_id !== auth.sub) return json({ error: "address_taken" }, { status: 409 });
+      if (!existing.user_id) {
+        await env.DB.prepare("UPDATE mailboxes SET user_id = ?1 WHERE id = ?2").bind(auth.sub, existing.id).run();
+      }
+      return json({ mailbox: { id: existing.id, address } }, { status: 200 });
+    }
+
+    const id = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+      .bind(id, auth.sub, address)
+      .run();
+    return json({ mailbox: { id, address } }, { status: 201 });
+  }
+
+  const userMailboxUnbindMatch = pathname.match(/^\/api\/user\/mailboxes\/([^/]+)$/);
+  if (userMailboxUnbindMatch && request.method === "DELETE") {
+    const auth = await requireAuth(request, env);
+    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+
+    const address = decodeURIComponent(userMailboxUnbindMatch[1]).trim().toLowerCase();
+    if (!address || !address.includes("@")) return json({ error: "invalid_address" }, { status: 400 });
+
+    const row = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 AND user_id = ?2 AND is_active = 1 LIMIT 1")
+      .bind(address, auth.sub)
+      .first<{ id: string }>();
+    if (!row?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
+
+    await env.DB.prepare("UPDATE mailboxes SET user_id = NULL WHERE id = ?1").bind(row.id).run();
+    return text("", { status: 204 });
+  }
 
   const wsMailboxMatch = pathname.match(/^\/api\/ws\/mailboxes\/([^/]+)$/);
   if (wsMailboxMatch && request.method === "GET") {
@@ -35,20 +179,11 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/mailboxes" && request.method === "POST") {
-    const token = getToken(request);
-    if (!token) return json({ error: "unauthorized" }, { status: 401 });
+    const auth = await requireAuth(request, env);
+    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
 
-    const user = await env.DB.prepare("SELECT id FROM users WHERE api_token = ?1 LIMIT 1")
-      .bind(token)
-      .first<{ id: string }>();
-    if (!user?.id) return json({ error: "unauthorized" }, { status: 401 });
-
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "invalid_json" }, { status: 400 });
-    }
+    const body = await readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
     const address =
       typeof body === "object" && body && "address" in body && typeof (body as any).address === "string"
@@ -56,9 +191,22 @@ export async function handleFetch(request: Request, env: Env) {
         : "";
     if (!address || !address.includes("@")) return json({ error: "invalid_address" }, { status: 400 });
 
+    const existing = await env.DB.prepare(
+      "SELECT id, user_id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
+    )
+      .bind(address)
+      .first<{ id: string; user_id: string | null }>();
+    if (existing?.id) {
+      if (existing.user_id && existing.user_id !== auth.sub) return json({ error: "address_taken" }, { status: 409 });
+      if (!existing.user_id) {
+        await env.DB.prepare("UPDATE mailboxes SET user_id = ?1 WHERE id = ?2").bind(auth.sub, existing.id).run();
+      }
+      return json({ mailbox: { id: existing.id, address } }, { status: 200 });
+    }
+
     const id = crypto.randomUUID();
     await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(id, user.id, address)
+      .bind(id, auth.sub, address)
       .run();
 
     return json({ mailbox: { id, address } }, { status: 201 });
@@ -293,15 +441,4 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   return json({ error: "not_found" }, { status: 404 });
-}
-
-function getToken(request: Request) {
-  const auth = request.headers.get("authorization");
-  if (auth) {
-    const m = auth.match(/^Bearer\s+(.+)$/i);
-    if (m?.[1]) return m[1].trim();
-  }
-  const direct = request.headers.get("x-api-token");
-  if (direct) return direct.trim();
-  return null;
 }

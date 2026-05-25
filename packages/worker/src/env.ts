@@ -11,4 +11,5 @@ export type Env = {
   PARSE_QUEUE: Queue<ParseQueueMessage>;
   MAIL_EVENTS: DurableObjectNamespace;
   HTML_INLINE_LIMIT: string;
+  JWT_SECRET: string;
 };

@@ -7,6 +7,7 @@ name = "EMAIL"
 
 [vars]
 HTML_INLINE_LIMIT = "102400"
+JWT_SECRET = "local-dev-only-change-me"
 
 [ai]
 binding = "AI"

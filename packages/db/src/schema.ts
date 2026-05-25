@@ -3,21 +3,20 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  apiToken: text("api_token").notNull(),
+  username: text("username").notNull(),
+  passwordHash: text("password_hash").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
 });
 
-export const usersApiTokenIdx = uniqueIndex("users_api_token_uq").on(users.apiToken);
+export const usersUsernameIdx = uniqueIndex("users_username_uq").on(users.username);
 
 export const mailboxes = sqliteTable(
   "mailboxes",
   {
     id: text("id").primaryKey(),
     userId: text("user_id")
-      .notNull()
       .references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
     address: text("address").notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
