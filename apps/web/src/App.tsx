@@ -3,8 +3,10 @@ import {
   For,
   Show,
   createEffect,
+  createMemo,
   createResource,
   createSignal,
+  onCleanup,
   onMount,
 } from "solid-js";
 
@@ -47,6 +49,14 @@ async function apiText(path: string): Promise<string> {
   return res.text();
 }
 
+type RedDotResponse = {
+  address: string;
+  since: number;
+  newCount: number;
+  latestReceivedAt: number | null;
+  latestNewReceivedAt: number | null;
+};
+
 function formatTime(ts: number | undefined) {
   if (!ts) return "";
   return new Date(ts).toLocaleString("zh-CN", { hour12: false });
@@ -73,6 +83,14 @@ function ShadowHtml(props: { html: string }) {
 export default function App() {
   const [mailboxAddress, setMailboxAddress] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [isVisible, setIsVisible] = createSignal(typeof document !== "undefined" ? !document.hidden : true);
+  const [unseenByMailbox, setUnseenByMailbox] = createSignal<Record<string, number>>({});
+
+  const currentUnseen = createMemo(() => {
+    const addr = mailboxAddress();
+    if (!addr) return 0;
+    return unseenByMailbox()[addr] ?? 0;
+  });
 
   const [mailboxes] = createResource(async () => {
     const data = await apiJson<{ mailboxes: string[] }>("/api/mailboxes");
@@ -106,6 +124,14 @@ export default function App() {
     const savedMsg = localStorage.getItem("bingmail.selected") || "";
     if (savedMailbox) setMailboxAddress(savedMailbox);
     if (savedMsg) setSelectedId(savedMsg);
+
+    const onVis = () => setIsVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+    };
   });
 
   createEffect(() => {
@@ -117,18 +143,222 @@ export default function App() {
     localStorage.setItem("bingmail.selected", v);
   });
 
+  function lastSeenKey(address: string) {
+    return `bingmail.lastSeen.${address}`;
+  }
+
+  function getLastSeen(address: string) {
+    return Math.max(Number(localStorage.getItem(lastSeenKey(address)) || "0") || 0, 0);
+  }
+
+  function setLastSeen(address: string, ts: number) {
+    localStorage.setItem(lastSeenKey(address), String(Math.max(ts || 0, 0)));
+  }
+
+  function setUnseen(address: string, count: number) {
+    setUnseenByMailbox((m) => ({ ...m, [address]: Math.max(count || 0, 0) }));
+  }
+
+  createEffect(() => {
+    const addr = mailboxAddress();
+    const list = messages() || [];
+    if (!addr || !isVisible() || list.length === 0) return;
+    const max = list.reduce((acc, m) => Math.max(acc, m.receivedAt || 0), 0);
+    if (!max) return;
+    if (max > getLastSeen(addr)) setLastSeen(addr, max);
+    setUnseen(addr, 0);
+  });
+
+  createEffect(() => {
+    const addr = mailboxAddress();
+    if (!addr) return;
+
+    let stopped = false;
+    let ws: WebSocket | null = null;
+    let wsReady = false;
+    let timer: number | null = null;
+    let backoffMs = 0;
+    let inflight = false;
+    let queued = false;
+    let lastRefetchAt = 0;
+
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = `${protocol}://${location.host}/api/ws/mailboxes/${encodeURIComponent(addr)}`;
+
+    const baseInterval = () => {
+      if (!isVisible()) return 20000;
+      if (wsReady) return 30000;
+      return 4000;
+    };
+
+    const schedule = (delayMs: number) => {
+      if (stopped) return;
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void poll("timer");
+      }, Math.max(delayMs, 0));
+    };
+
+    const poll = async (_reason: "timer" | "ws" | "focus") => {
+      if (stopped) return;
+      if (inflight) {
+        queued = true;
+        return;
+      }
+      inflight = true;
+
+      const since = getLastSeen(addr);
+      try {
+        const data = await apiJson<RedDotResponse>(
+          `/api/mailboxes/${encodeURIComponent(addr)}/red-dot?since=${encodeURIComponent(String(since))}`,
+        );
+        backoffMs = 0;
+        setUnseen(addr, data.newCount);
+        if (data.newCount > 0 && isVisible()) {
+          const now = Date.now();
+          if (now - lastRefetchAt > 800) {
+            lastRefetchAt = now;
+            refetchMessages();
+          }
+        }
+      } catch {
+        backoffMs = Math.min(backoffMs ? backoffMs * 2 : 1500, 30000);
+      } finally {
+        inflight = false;
+        if (queued) {
+          queued = false;
+          void poll("timer");
+          return;
+        }
+        schedule(baseInterval() + backoffMs);
+      }
+    };
+
+    const connectWs = () => {
+      if (stopped || !isVisible()) return;
+      if (ws) return;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch {
+        ws = null;
+        schedule(baseInterval() + 1500);
+        return;
+      }
+
+      ws.onopen = () => {
+        wsReady = true;
+        backoffMs = 0;
+        schedule(50);
+      };
+      ws.onmessage = (evt) => {
+        if (typeof evt.data !== "string") return;
+        if (evt.data === "pong") return;
+        try {
+          const msg = JSON.parse(evt.data) as { type?: string };
+          if (msg?.type === "hint") schedule(120);
+        } catch {}
+      };
+      ws.onerror = () => {
+        try {
+          ws?.close();
+        } catch {}
+      };
+      ws.onclose = () => {
+        wsReady = false;
+        ws = null;
+        backoffMs = Math.min(backoffMs ? backoffMs * 2 : 1500, 30000);
+        schedule(baseInterval() + backoffMs);
+      };
+    };
+
+    connectWs();
+    schedule(80);
+
+    createEffect(() => {
+      const visible = isVisible();
+      if (!visible) {
+        try {
+          ws?.close();
+        } catch {}
+        ws = null;
+        wsReady = false;
+        schedule(baseInterval());
+        return;
+      }
+      connectWs();
+      schedule(50);
+    });
+
+    onCleanup(() => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+      try {
+        ws?.close();
+      } catch {}
+      ws = null;
+    });
+  });
+
+  createEffect(() => {
+    const list = mailboxes() || [];
+    if (!isVisible() || list.length === 0) return;
+
+    let stopped = false;
+    let timer: number | null = null;
+    let backoffMs = 0;
+
+    const targets = () => list.slice(0, 10);
+
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const addrs = targets();
+        await Promise.all(
+          addrs.map(async (addr) => {
+            const since = getLastSeen(addr);
+            const data = await apiJson<RedDotResponse>(
+              `/api/mailboxes/${encodeURIComponent(addr)}/red-dot?since=${encodeURIComponent(String(since))}`,
+            );
+            setUnseen(addr, data.newCount);
+          }),
+        );
+        backoffMs = 0;
+      } catch {
+        backoffMs = Math.min(backoffMs ? backoffMs * 2 : 2000, 30000);
+      } finally {
+        if (stopped) return;
+        if (timer) window.clearTimeout(timer);
+        timer = window.setTimeout(tick, 20000 + backoffMs);
+      }
+    };
+
+    void tick();
+
+    onCleanup(() => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    });
+  });
+
   return (
     <div class="h-dvh w-full overflow-hidden">
       <div class="grid h-full grid-cols-[260px_420px_1fr] gap-0 border-zinc-800">
         <aside class="h-full border-r border-zinc-800 bg-zinc-950/60 p-4">
           <div class="flex items-baseline justify-between">
             <div class="text-sm font-semibold tracking-wide text-zinc-100">Bingmail</div>
-            <button
-              class="rounded-md bg-white/5 px-2 py-1 text-xs text-zinc-200 hover:bg-white/10"
-              onClick={() => refetchMessages()}
-            >
-              刷新
-            </button>
+            <div class="flex items-baseline gap-2">
+              <Show when={currentUnseen() > 0}>
+                <div class="rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-200">
+                  {currentUnseen()}
+                </div>
+              </Show>
+              <button
+                class="rounded-md bg-white/5 px-2 py-1 text-xs text-zinc-200 hover:bg-white/10"
+                onClick={() => refetchMessages()}
+              >
+                刷新
+              </button>
+            </div>
           </div>
 
           <div class="mt-4">
@@ -147,11 +377,18 @@ export default function App() {
               <For each={mailboxes() || []}>
                 {(addr) => (
                   <button
-                    class="w-full truncate rounded-md px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/5"
+                    class="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-200 hover:bg-white/5"
                     classList={{ "bg-white/10": addr === mailboxAddress() }}
                     onClick={() => setMailboxAddress(addr)}
                   >
-                    {addr}
+                    <div class="flex items-baseline justify-between gap-2">
+                      <div class="min-w-0 flex-1 truncate">{addr}</div>
+                      <Show when={(unseenByMailbox()[addr] ?? 0) > 0}>
+                        <div class="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-200">
+                          {unseenByMailbox()[addr] ?? 0}
+                        </div>
+                      </Show>
+                    </div>
                   </button>
                 )}
               </For>

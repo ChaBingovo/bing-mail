@@ -28,3 +28,11 @@ queue = "bingmail-parse"
 queue = "bingmail-parse"
 max_batch_size = 1
 max_batch_timeout = 1
+
+[[durable_objects.bindings]]
+name = "MAIL_EVENTS"
+class_name = "MailEventsDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MailEventsDO"]

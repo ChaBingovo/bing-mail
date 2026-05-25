@@ -48,9 +48,11 @@ export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: E
 }
 
 async function processOne(messageId: string, env: Env) {
-  const row = await env.DB.prepare("SELECT r2_raw_key, mailbox_id FROM messages WHERE id = ?1 LIMIT 1")
+  const row = await env.DB.prepare(
+    "SELECT r2_raw_key, mailbox_id, received_at FROM messages WHERE id = ?1 LIMIT 1",
+  )
     .bind(messageId)
-    .first<{ r2_raw_key: string; mailbox_id: string }>();
+    .first<{ r2_raw_key: string; mailbox_id: string; received_at: number }>();
 
   if (!row?.r2_raw_key) return;
 
@@ -170,4 +172,19 @@ async function processOne(messageId: string, env: Env) {
   await env.DB.prepare("INSERT INTO messages_fts (message_id, subject, body_text) VALUES (?1, ?2, ?3)")
     .bind(messageId, subject ?? "", textPlain ?? "")
     .run();
+
+  const mailbox = await env.DB.prepare("SELECT address FROM mailboxes WHERE id = ?1 LIMIT 1")
+    .bind(row.mailbox_id)
+    .first<{ address: string }>();
+  if (mailbox?.address) {
+    try {
+      const id = env.MAIL_EVENTS.idFromName(mailbox.address);
+      const stub = env.MAIL_EVENTS.get(id);
+      await stub.fetch("https://mail-events/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messageId, receivedAt: row.received_at }),
+      });
+    } catch {}
+  }
 }

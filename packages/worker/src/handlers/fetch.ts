@@ -12,6 +12,22 @@ export async function handleFetch(request: Request, env: Env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
+  const wsMailboxMatch = pathname.match(/^\/api\/ws\/mailboxes\/([^/]+)$/);
+  if (wsMailboxMatch && request.method === "GET") {
+    const address = decodeURIComponent(wsMailboxMatch[1]).trim().toLowerCase();
+    const mailbox = await env.DB.prepare(
+      "SELECT id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
+    )
+      .bind(address)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
+
+    const id = env.MAIL_EVENTS.idFromName(address);
+    const stub = env.MAIL_EVENTS.get(id);
+    const doReq = new Request("https://mail-events/connect", request);
+    return stub.fetch(doReq);
+  }
+
   if (pathname === "/api/mailboxes" && request.method === "GET") {
     const res = await env.DB.prepare("SELECT address FROM mailboxes WHERE is_active = 1 ORDER BY address ASC")
       .all<{ address: string }>();
@@ -98,6 +114,45 @@ export async function handleFetch(request: Request, env: Env) {
         aiService: r.ai_service ?? null,
       })),
     });
+  }
+
+  const redDotMatch = pathname.match(/^\/api\/mailboxes\/([^/]+)\/red-dot$/);
+  if (redDotMatch && request.method === "GET") {
+    const address = decodeURIComponent(redDotMatch[1]).trim().toLowerCase();
+    const mailbox = await env.DB.prepare(
+      "SELECT id FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
+    )
+      .bind(address)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
+
+    const sinceRaw = url.searchParams.get("since") || "0";
+    const since = Math.max(Number(sinceRaw) || 0, 0);
+
+    const stat = await env.DB.prepare(
+      "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND received_at > ?2",
+    )
+      .bind(mailbox.id, since)
+      .first<{ new_count: number; latest_new_received_at: number | null }>();
+
+    const latest = await env.DB.prepare("SELECT MAX(received_at) AS latest_received_at FROM messages WHERE mailbox_id = ?1")
+      .bind(mailbox.id)
+      .first<{ latest_received_at: number | null }>();
+
+    return json(
+      {
+        address,
+        since,
+        newCount: stat?.new_count ?? 0,
+        latestReceivedAt: latest?.latest_received_at ?? null,
+        latestNewReceivedAt: stat?.latest_new_received_at ?? null,
+      },
+      {
+        headers: {
+          "cache-control": "no-store",
+        },
+      },
+    );
   }
 
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);

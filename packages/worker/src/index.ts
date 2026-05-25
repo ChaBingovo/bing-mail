@@ -3,6 +3,7 @@ import type { MessageBatch } from "@cloudflare/workers-types";
 import { handleEmail } from "./handlers/email";
 import { handleFetch } from "./handlers/fetch";
 import { handleQueue } from "./handlers/queue";
+export { MailEventsDO } from "./durable/mailEvents";
 
 export default {
   fetch(request: Request, env: Env, _ctx: ExecutionContext) {
