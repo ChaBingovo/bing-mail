@@ -3,6 +3,7 @@ import path from "node:path";
 
 const DB_NAME = "bingmail";
 const MIGRATIONS_TABLE = "__bingmail_migrations";
+const PROJECT_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 
 type WranglerExecuteResult = Array<{
   results?: Array<Record<string, unknown>>;
@@ -10,7 +11,7 @@ type WranglerExecuteResult = Array<{
 }>;
 
 async function runWrangler(args: string[]) {
-  const proc = Bun.spawn(["bunx", "wrangler", ...args], {
+  const proc = Bun.spawn(["bunx", "wrangler", "--cwd", PROJECT_ROOT, ...args], {
     cwd: process.cwd(),
     stdout: "pipe",
     stderr: "pipe",

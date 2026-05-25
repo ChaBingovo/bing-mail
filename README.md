@@ -2,6 +2,78 @@
 
 基于 Cloudflare Email Routing + Workers + R2 + D1 + Queues 的网页邮箱实验工程。
 
+## 部署（Cloudflare Workers）
+
+### 前置条件
+
+- 一个已接入 Cloudflare 的域名，并在 Cloudflare 控制台启用 Email Routing
+- 已安装 Bun（本仓库脚本默认用 Bun 驱动 Wrangler）
+
+### 创建 Cloudflare 资源
+
+1. 登录 Wrangler
+
+```bash
+bunx wrangler login
+```
+
+2. 创建 D1 / R2 / Queue（名称需与 [wrangler.toml](./wrangler.toml) 一致）
+
+```bash
+bunx wrangler d1 create bingmail
+bunx wrangler r2 bucket create bingmail-mail
+bunx wrangler queues create bingmail-parse
+```
+
+3. 回填 D1 database_id
+
+`wrangler d1 create` 会输出 database_id，请将其写入 [wrangler.toml](./wrangler.toml) 的 `database_id`：
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "bingmail"
+database_id = "REPLACE_ME"
+```
+
+### 配置 Secret
+
+本项目需要 `JWT_SECRET` 用于登录态签名（不要提交到仓库）：
+
+```bash
+bunx wrangler secret put JWT_SECRET
+```
+
+### Wrangler 部署（推荐）
+
+```bash
+bun run deploy:worker
+```
+
+### GitHub Actions 自动部署
+
+仓库已包含工作流： [.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)
+
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中添加：
+
+- `CLOUDFLARE_API_TOKEN`：具有 Workers 部署权限的 API Token
+- `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID
+
+推送到 `main` 分支会自动部署。
+
+### 仪表盘部署（不走本地 Wrangler）
+
+Workers & Pages → Create → 选择从 GitHub 部署（或连接已有仓库），并确保在构建环境中能安装 `packages/worker` 的依赖并执行部署。
+
+如果使用 npm（控制台默认），可参考：
+
+```bash
+npm --prefix packages/worker ci
+npx --prefix packages/worker wrangler deploy --cwd .
+```
+
+并在仪表盘中配置与本地一致的 Secrets（至少 `JWT_SECRET`）。
+
 ## 本地开发
 
 1. 安装依赖

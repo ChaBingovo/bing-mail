@@ -12,10 +12,10 @@
   },
   "scripts": {
     "dev": "bun ./scripts/wrangler-dev.ts",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --cwd ../..",
     "typecheck": "bunx tsc -p tsconfig.json",
     "db:migrate": "bun ./scripts/db-migrate.ts",
-    "db:seed:dev": "bunx wrangler d1 execute bingmail --local --yes --file ../db/seeds/dev.sql",
-    "db:reset:local": "bunx wrangler d1 execute bingmail --local --yes --file ../db/seeds/reset.sql && bun ./scripts/db-migrate.ts"
+    "db:seed:dev": "bunx wrangler d1 execute bingmail --local --yes --cwd ../.. --file ../db/seeds/dev.sql",
+    "db:reset:local": "bunx wrangler d1 execute bingmail --local --yes --cwd ../.. --file ../db/seeds/reset.sql && bun ./scripts/db-migrate.ts"
   }
 }
