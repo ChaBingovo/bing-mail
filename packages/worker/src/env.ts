@@ -6,6 +6,7 @@ export type ParseQueueMessage = {
 
 export type Env = {
   AI: Ai;
+  ASSETS: Fetcher;
   DB: D1Database;
   MAIL_BUCKET: R2Bucket;
   PARSE_QUEUE: Queue<ParseQueueMessage>;

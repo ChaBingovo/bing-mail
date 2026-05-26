@@ -241,6 +241,10 @@ export async function handleFetch(request: Request, env: Env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
+  if (!pathname.startsWith("/api")) {
+    return env.ASSETS.fetch(request);
+  }
+
   if (pathname === "/api/domains" && request.method === "GET") {
     const domains = await listActiveDomains(env);
     return json({ domains });

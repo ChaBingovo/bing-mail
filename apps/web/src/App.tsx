@@ -7,6 +7,10 @@ import { SetupView } from "./components/SetupView";
 import { Sidebar } from "./components/Sidebar";
 import { AdminSettingsView } from "./components/AdminSettingsView";
 import { UserSettingsView } from "./components/UserSettingsView";
+import { NotificationIsland } from "./components/NotificationIsland";
+import type { NotificationIslandData } from "./components/NotificationIsland";
+import { Spotlight } from "./components/Spotlight";
+import type { SpotlightAction } from "./components/Spotlight";
 import { AppProvider, useApp } from "./context/AppContext";
 import { VisibilityProvider, useVisibility } from "./context/VisibilityContext";
 import type { AuthUser, MessageDetail, MessageMeta, RedDotResponse } from "./types";
@@ -94,7 +98,7 @@ function GuestView() {
     <Show
       when={setup.state === "ready" && setup()?.initialized === false}
       fallback={
-        <div class="flex h-dvh w-full items-center justify-center bg-zinc-950 p-6">
+        <div class="flex h-dvh w-full items-center justify-center p-6">
           <Show
             when={tab() === "login"}
             fallback={
@@ -127,6 +131,31 @@ function ConsoleView() {
   const app = useApp();
   const { isVisible } = useVisibility();
 
+  const [spotlightOpen, setSpotlightOpen] = createSignal(false);
+  const [displayAddress, setDisplayAddress] = createSignal("");
+
+  const [island, setIsland] = createSignal<NotificationIslandData | null>(null);
+  const [islandClosing, setIslandClosing] = createSignal(false);
+  const [hintTick, setHintTick] = createSignal(0);
+  let lastNotifiedId = "";
+  let islandTimer: number | null = null;
+  const closeIsland = () => {
+    if (!island()) return;
+    setIslandClosing(true);
+    if (islandTimer) window.clearTimeout(islandTimer);
+    islandTimer = window.setTimeout(() => {
+      setIsland(null);
+      setIslandClosing(false);
+    }, 200);
+  };
+
+  const showIsland = (data: NotificationIslandData) => {
+    setIslandClosing(false);
+    setIsland(data);
+    if (islandTimer) window.clearTimeout(islandTimer);
+    islandTimer = window.setTimeout(() => closeIsland(), 5200);
+  };
+
   const [mailboxAddress] = createResource(
     () => app.token(),
     async (t) => {
@@ -140,7 +169,17 @@ function ConsoleView() {
     const addr = mailboxAddress();
     if (!addr) return;
     if (app.activeAddress() !== addr) app.setActiveAddress(addr);
+    if (!displayAddress()) setDisplayAddress(addr);
   });
+
+  const [aliases] = createResource(
+    () => app.token(),
+    async (t) => {
+      if (!t) return { mailbox: "", aliases: [] as string[] };
+      const data = await app.api.apiJson<{ aliases: string[]; mailbox: string }>("/api/user/aliases");
+      return { mailbox: data.mailbox || "", aliases: Array.isArray(data.aliases) ? data.aliases : [] };
+    },
+  );
 
   const activeOwnedAddress = createMemo(() => {
     if (app.page() !== "inbox") return "";
@@ -148,13 +187,13 @@ function ConsoleView() {
   });
 
   const currentUnseen = createMemo(() => {
-    const addr = activeOwnedAddress();
+    const addr = mailboxAddress() || "";
     if (!addr) return 0;
     return app.unseenByMailbox()[addr] ?? 0;
   });
 
-  const [messages, { refetch: refetchMessages }] = createResource(activeOwnedAddress, async (address) => {
-    if (!address || app.page() !== "inbox") return [];
+  const [messages, { refetch: refetchMessages }] = createResource(() => mailboxAddress() || "", async (address) => {
+    if (!address) return [];
     const data = await app.api.apiJson<{ messages: MessageMeta[] }>("/api/user/messages?limit=100");
     return data.messages;
   });
@@ -188,8 +227,7 @@ function ConsoleView() {
   });
 
   createEffect(() => {
-    if (app.page() !== "inbox") return;
-    const addr = activeOwnedAddress();
+    const addr = mailboxAddress() || "";
     if (!addr) return;
 
     let stopped = false;
@@ -235,6 +273,7 @@ function ConsoleView() {
         backoffMs = 0;
         app.setUnseen(addr, data.newCount);
         if (data.newCount > 0 && isVisible()) {
+          setHintTick((n) => n + 1);
           const now = Date.now();
           if (now - lastRefetchAt > 800) {
             lastRefetchAt = now;
@@ -275,7 +314,11 @@ function ConsoleView() {
         if (evt.data === "pong") return;
         try {
           const msg = JSON.parse(evt.data) as { type?: string };
-          if (msg?.type === "hint") schedule(120);
+          if (msg?.type === "hint") {
+            setHintTick((n) => n + 1);
+            schedule(120);
+            refetchMessages();
+          }
         } catch {}
       };
       ws.onerror = () => {
@@ -320,88 +363,162 @@ function ConsoleView() {
   });
 
   createEffect(() => {
-    const addr = mailboxAddress() || "";
-    const targets = addr ? [addr] : [];
-    if (app.page() !== "inbox" || !isVisible() || targets.length === 0) return;
-
-    let stopped = false;
-    let timer: number | null = null;
-    let backoffMs = 0;
-
-    const tick = async () => {
-      if (stopped) return;
-      try {
-        await Promise.all(
-          targets.map(async (addr) => {
-            const since = getLastSeen(addr);
-            const data = await app.api.apiJson<RedDotResponse>(
-              `/api/user/red-dot?since=${encodeURIComponent(String(since))}`,
-            );
-            app.setUnseen(addr, data.newCount);
-          }),
-        );
-        backoffMs = 0;
-      } catch {
-        backoffMs = Math.min(backoffMs ? backoffMs * 2 : 2000, 30000);
-      } finally {
-        if (stopped) return;
-        if (timer) window.clearTimeout(timer);
-        timer = window.setTimeout(tick, 20000 + backoffMs);
-      }
-    };
-
-    void tick();
-
+    if (!island()) return;
     onCleanup(() => {
-      stopped = true;
-      if (timer) window.clearTimeout(timer);
+      if (islandTimer) window.clearTimeout(islandTimer);
+      islandTimer = null;
     });
   });
 
+  createEffect(() => {
+    hintTick();
+    const addr = mailboxAddress() || "";
+    const list = messages() || [];
+    if (!addr || list.length === 0) return;
+    const since = getLastSeen(addr);
+    const latestNew = list.find((m) => (m.receivedAt || 0) > since);
+    if (!latestNew || latestNew.id === lastNotifiedId) return;
+    lastNotifiedId = latestNew.id;
+    showIsland({
+      title: "新邮件到达",
+      subtitle: latestNew.subject || latestNew.fromName || latestNew.fromAddress || "",
+      service: latestNew.aiService,
+      code: latestNew.aiCode,
+    });
+  });
+
+  createEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() !== "k") return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = (el?.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || (el as any)?.isContentEditable) return;
+      e.preventDefault();
+      setSpotlightOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+
+  const getSpotlightActions = (q: string): SpotlightAction[] => {
+    const query = (q || "").trim().toLowerCase();
+    const actions: SpotlightAction[] = [];
+
+    actions.push({
+      key: "nav-inbox",
+      title: "收件箱",
+      subtitle: "跳转到收件箱",
+      right: "↩",
+      onPick: () => app.setPage("inbox"),
+    });
+    actions.push({
+      key: "nav-settings",
+      title: "账户设置",
+      subtitle: "跳转到账户设置",
+      onPick: () => app.setPage("settings"),
+    });
+    if (app.currentUser()?.isAdmin) {
+      actions.push({
+        key: "nav-admin",
+        title: "管理员设置",
+        subtitle: "跳转到管理员设置",
+        onPick: () => app.setPage("admin"),
+      });
+    }
+
+    const mailbox = mailboxAddress() || "";
+    const aliasList = aliases()?.aliases || [];
+    const addrItems = [mailbox, ...aliasList].filter(Boolean);
+    addrItems.forEach((a) => {
+      actions.push({
+        key: `addr-${a}`,
+        title: a,
+        subtitle: "切换显示邮箱地址",
+        right: a === displayAddress() ? "当前" : "",
+        onPick: () => setDisplayAddress(a),
+      });
+    });
+
+    const list = messages() || [];
+    const filtered =
+      query.length === 0
+        ? []
+        : list
+            .filter((m) => {
+              const s = `${m.subject || ""} ${m.fromName || ""} ${m.fromAddress || ""} ${m.snippet || ""} ${
+                m.aiCode || ""
+              } ${m.aiService || ""}`.toLowerCase();
+              return s.includes(query);
+            })
+            .slice(0, 10);
+    filtered.forEach((m) => {
+      actions.push({
+        key: `msg-${m.id}`,
+        title: m.subject || "(无主题)",
+        subtitle: m.fromName || m.fromAddress || "",
+        right: "打开",
+        onPick: () => {
+          app.setPage("inbox");
+          app.setSelectedId(m.id);
+        },
+      });
+    });
+
+    if (!query) return actions;
+    return actions.filter((a) => `${a.title} ${a.subtitle || ""}`.toLowerCase().includes(query));
+  };
+
+  const sidebar = () => (
+    <Sidebar
+      user={app.currentUser()!}
+      page={app.page()}
+      setPage={app.setPage}
+      activeAddress={displayAddress() || mailboxAddress() || ""}
+      currentUnseen={currentUnseen()}
+      onRefresh={() => refetchMessages()}
+      onLogout={() => app.logout()}
+      onOpenSpotlight={() => setSpotlightOpen(true)}
+    />
+  );
+
   return (
-    <div class="h-dvh w-full overflow-hidden">
-      <Show
-        when={app.page() === "inbox"}
-        fallback={
-          <div class="grid h-full grid-cols-[260px_1fr] gap-0 border-zinc-800">
-            <Sidebar
-              user={app.currentUser()!}
-              page={app.page()}
-              setPage={app.setPage}
-              currentUnseen={currentUnseen()}
-              onRefresh={() => refetchMessages()}
-              onLogout={() => app.logout()}
-            />
-            <Show when={app.page() === "settings"}>
-              <UserSettingsView user={app.currentUser()!} api={app.api} />
-            </Show>
-            <Show when={app.page() === "admin"}>
-              <AdminSettingsView api={app.api} />
-            </Show>
-          </div>
-        }
-      >
-        <div class="grid h-full grid-cols-[260px_420px_1fr] gap-0 border-zinc-800">
-          <Sidebar
-            user={app.currentUser()!}
-            page={app.page()}
-            setPage={app.setPage}
-            currentUnseen={currentUnseen()}
-            onRefresh={() => refetchMessages()}
-            onLogout={() => app.logout()}
-          />
-
-          <EmailList
-            mailboxAddress={activeOwnedAddress()}
-            messages={messages() || []}
-            loading={messages.state !== "ready"}
-            selectedId={selectedId()}
-            setSelectedId={(id) => app.setSelectedId(id)}
-          />
-
-          <EmailViewer detail={detail() || null} html={html() || ""} />
-        </div>
+    <div class="relative h-dvh w-full overflow-hidden p-4">
+      <Show when={island()}>
+        <NotificationIsland data={island()!} closing={islandClosing()} onClose={closeIsland} />
       </Show>
+      <Spotlight open={spotlightOpen()} onClose={() => setSpotlightOpen(false)} getActions={getSpotlightActions} />
+
+      <div class="glass-panel h-full overflow-hidden rounded-[28px]">
+        <Show
+          when={app.page() === "inbox"}
+          fallback={
+            <div class="grid h-full grid-cols-[280px_1fr] gap-0">
+              {sidebar()}
+              <Show when={app.page() === "settings"}>
+                <UserSettingsView user={app.currentUser()!} api={app.api} />
+              </Show>
+              <Show when={app.page() === "admin"}>
+                <AdminSettingsView api={app.api} />
+              </Show>
+            </div>
+          }
+        >
+          <div class="grid h-full grid-cols-[280px_440px_1fr] gap-0">
+            {sidebar()}
+
+            <EmailList
+              mailboxAddress={displayAddress() || activeOwnedAddress()}
+              messages={messages() || []}
+              loading={messages.state !== "ready"}
+              selectedId={selectedId()}
+              setSelectedId={(id) => app.setSelectedId(id)}
+            />
+
+            <EmailViewer detail={detail() || null} html={html() || ""} />
+          </div>
+        </Show>
+      </div>
     </div>
   );
 }

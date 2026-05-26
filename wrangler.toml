@@ -2,6 +2,14 @@ name = "bingmail"
 main = "packages/worker/src/index.ts"
 compatibility_date = "2026-05-25"
 
+[build]
+command = "bun ./scripts/build-web.ts"
+
+[assets]
+directory = "apps/web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
 [[send_email]]
 name = "EMAIL"
 

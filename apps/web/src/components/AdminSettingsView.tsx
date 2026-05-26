@@ -176,7 +176,7 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   };
 
   return (
-    <div class="h-full overflow-auto bg-zinc-950 p-6">
+    <div class="h-full overflow-auto bg-white/0 p-6">
       <div class="mx-auto w-full max-w-3xl space-y-6">
         <div>
           <div class="text-lg font-semibold text-zinc-100">管理员设置</div>

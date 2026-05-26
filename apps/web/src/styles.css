@@ -2,8 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  height: 100%;
+@layer base {
+  :root {
+    --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-spring-soft: cubic-bezier(0.2, 0.9, 0.2, 1);
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    @apply font-sans text-zinc-100 antialiased;
+    background:
+      radial-gradient(1200px 600px at 20% 12%, rgba(99, 102, 241, 0.12), rgba(0, 0, 0, 0) 60%),
+      radial-gradient(900px 520px at 84% 18%, rgba(16, 185, 129, 0.1), rgba(0, 0, 0, 0) 58%),
+      radial-gradient(1200px 760px at 55% 88%, rgba(244, 114, 182, 0.08), rgba(0, 0, 0, 0) 62%),
+      linear-gradient(180deg, #050608 0%, #07080b 55%, #040406 100%);
+  }
+
+  ::selection {
+    background: rgba(99, 102, 241, 0.35);
+  }
 }
 
+@layer utilities {
+  .glass-panel {
+    @apply border border-white/10 bg-white/5 shadow-glass backdrop-blur-2xl;
+  }
+
+  .glass-panel-sm {
+    @apply border border-white/10 bg-white/5 shadow-glassSm backdrop-blur-xl;
+  }
+
+  .pressable {
+    @apply transition-transform duration-200 ease-spring active:scale-[0.985];
+  }
+
+  .spring-colors {
+    @apply transition-colors duration-200 ease-spring;
+  }
+}

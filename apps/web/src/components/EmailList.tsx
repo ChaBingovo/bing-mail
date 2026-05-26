@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 import type { MessageMeta } from "../types";
 import { formatTime } from "../utils/format";
+import { AiCodeCard } from "./AiCodeCard";
 
 export function EmailList(props: {
   mailboxAddress: string;
@@ -10,7 +11,7 @@ export function EmailList(props: {
   setSelectedId: (id: string) => void;
 }) {
   return (
-    <section class="h-full border-r border-zinc-800 bg-zinc-950 p-2">
+    <section class="h-full border-r border-white/10 bg-white/0 p-2">
       <div class="px-2 py-2 text-xs font-medium text-zinc-400">
         <Show when={props.mailboxAddress} fallback={"请选择收件箱"}>
           {props.mailboxAddress}
@@ -25,7 +26,7 @@ export function EmailList(props: {
               const service = m.aiService;
               return (
                 <button
-                  class="mt-2 w-full rounded-lg border border-white/5 bg-white/0 px-3 py-3 text-left hover:bg-white/5"
+                  class="pressable spring-colors mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
                   classList={{ "bg-white/10": props.selectedId === m.id }}
                   onClick={() => props.setSelectedId(m.id)}
                 >
@@ -38,22 +39,8 @@ export function EmailList(props: {
                   <div class="mt-1 flex items-baseline justify-between gap-2">
                     <div class="min-w-0 flex-1 truncate text-xs text-zinc-400">{m.fromName || m.fromAddress || ""}</div>
                     <Show when={code}>
-                      <div class="shrink-0 flex items-baseline gap-1">
-                        <Show when={service}>
-                          <span class="rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-200">
-                            {service}
-                          </span>
-                        </Show>
-                        <span
-                          class="rounded-md bg-indigo-500/15 px-2 py-0.5 text-xs font-semibold text-indigo-200"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (code) void navigator.clipboard?.writeText(code);
-                          }}
-                        >
-                          {code}
-                        </span>
+                      <div class="shrink-0">
+                        <AiCodeCard code={code || ""} service={service} size="sm" />
                       </div>
                     </Show>
                   </div>
@@ -71,4 +58,3 @@ export function EmailList(props: {
     </section>
   );
 }
-
