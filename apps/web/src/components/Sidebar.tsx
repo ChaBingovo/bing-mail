@@ -13,7 +13,7 @@ export function Sidebar(props: {
   onOpenSpotlight: () => void;
 }) {
   return (
-    <aside class="h-full border-r border-white/10 bg-white/5 p-4 backdrop-blur-2xl">
+    <aside class="h-full border-r border-white/10 bg-white/5 p-4">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="truncate text-sm font-semibold tracking-wide text-zinc-100">Bingmail</div>

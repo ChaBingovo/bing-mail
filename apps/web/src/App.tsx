@@ -489,7 +489,7 @@ function ConsoleView() {
       </Show>
       <Spotlight open={spotlightOpen()} onClose={() => setSpotlightOpen(false)} getActions={getSpotlightActions} />
 
-      <div class="glass-panel h-full overflow-hidden rounded-[28px]">
+      <div class="glass-shell h-full overflow-hidden rounded-[28px]">
         <Show
           when={app.page() === "inbox"}
           fallback={

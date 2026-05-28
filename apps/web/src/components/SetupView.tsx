@@ -1,5 +1,6 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import type { AuthUser } from "../types";
+import { DropdownSelect } from "./DropdownSelect";
 
 export function SetupView(props: {
   onInitialized: (user: AuthUser, token: string) => void;
@@ -22,6 +23,14 @@ export function SetupView(props: {
     } catch {
       return [] as string[];
     }
+  });
+
+  const domainOptions = createMemo(() => {
+    const items = [{ value: "", label: "选择域名" }];
+    for (const d of domains() || []) {
+      items.push({ value: d, label: d });
+    }
+    return items;
   });
 
   const init = async () => {
@@ -157,14 +166,14 @@ export function SetupView(props: {
                   placeholder="admin"
                   class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
                 />
-                <select
+                <DropdownSelect
                   value={selectedDomain()}
-                  onChange={(e) => setSelectedDomain(e.currentTarget.value)}
-                  class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                >
-                  <option value="">选择域名</option>
-                  <For each={domains() || []}>{(d) => <option value={d}>{d}</option>}</For>
-                </select>
+                  options={domainOptions()}
+                  placeholder="选择域名"
+                  wrapperClass="relative shrink-0"
+                  class="min-w-[140px]"
+                  onChange={(v) => setSelectedDomain(v)}
+                />
               </div>
             </div>
 

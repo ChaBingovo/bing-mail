@@ -63,7 +63,9 @@ async function main() {
     if (applied.has(file)) continue;
     const filePath = path.join(migrationsDir, file);
     await execFile(filePath);
-    await execJson(`INSERT INTO ${MIGRATIONS_TABLE} (filename) VALUES ('${file.replace(/'/g, "''")}');`);
+    await execJson(
+      `INSERT OR IGNORE INTO ${MIGRATIONS_TABLE} (filename) VALUES ('${file.replace(/'/g, "''")}');`,
+    );
   }
 }
 

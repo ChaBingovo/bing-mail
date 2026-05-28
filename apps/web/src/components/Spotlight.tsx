@@ -64,7 +64,7 @@ export function Spotlight(props: { open: boolean; onClose: () => void; getAction
   return (
     <Show when={props.open}>
       <div
-        class="fixed inset-0 z-50 flex items-start justify-center bg-black/35 px-4 pt-24 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-start justify-center bg-black/35 px-4 pt-24"
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) close();
         }}

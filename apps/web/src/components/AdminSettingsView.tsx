@@ -1,5 +1,6 @@
-import { For, Show, createEffect, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import type { ApiClient } from "../services/api";
+import { DropdownSelect } from "./DropdownSelect";
 
 type AdminUserRow = {
   id: string;
@@ -43,6 +44,15 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   const [mailboxes, { refetch: refetchMailboxes }] = createResource(async () => {
     const data = await props.api.apiJson<{ mailboxes: AdminMailboxRow[] }>("/api/admin/mailboxes");
     return data.mailboxes;
+  });
+
+  const activeDomainOptions = createMemo(() => {
+    const items = [{ value: "", label: "选择域名" }];
+    for (const d of domains() || []) {
+      if (!d?.isActive) continue;
+      items.push({ value: d.domain, label: d.domain });
+    }
+    return items;
   });
 
   const [domainInput, setDomainInput] = createSignal("");
@@ -279,14 +289,14 @@ export function AdminSettingsView(props: { api: ApiClient }) {
                 placeholder="mailbox"
                 class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
               />
-              <select
+              <DropdownSelect
                 value={createMailboxDomain()}
-                onChange={(e) => setCreateMailboxDomain(e.currentTarget.value)}
-                class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-              >
-                <option value="">选择域名</option>
-                <For each={(domains() || []).filter((d) => d.isActive).map((d) => d.domain)}>{(d) => <option value={d}>{d}</option>}</For>
-              </select>
+                options={activeDomainOptions()}
+                placeholder="选择域名"
+                wrapperClass="relative shrink-0"
+                class="min-w-[140px]"
+                onChange={(v) => setCreateMailboxDomain(v)}
+              />
             </div>
             <label class="flex items-center gap-2 text-sm text-zinc-300">
               <input
@@ -365,14 +375,14 @@ export function AdminSettingsView(props: { api: ApiClient }) {
                 placeholder="mailbox"
                 class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
               />
-              <select
+              <DropdownSelect
                 value={mbMailboxDomain()}
-                onChange={(e) => setMbMailboxDomain(e.currentTarget.value)}
-                class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-              >
-                <option value="">选择域名</option>
-                <For each={(domains() || []).filter((d) => d.isActive).map((d) => d.domain)}>{(d) => <option value={d}>{d}</option>}</For>
-              </select>
+                options={activeDomainOptions()}
+                placeholder="选择域名"
+                wrapperClass="relative shrink-0"
+                class="min-w-[140px]"
+                onChange={(v) => setMbMailboxDomain(v)}
+              />
             </div>
             <input
               value={mbUserId()}

@@ -1,4 +1,5 @@
-import { For, Show, createSignal } from "solid-js";
+import { Show, createMemo, createSignal } from "solid-js";
+import { DropdownSelect } from "./DropdownSelect";
 
 export function RegisterCard(props: {
   domains: string[];
@@ -11,6 +12,14 @@ export function RegisterCard(props: {
   const [password, setPassword] = createSignal("");
   const [mailboxLocal, setMailboxLocal] = createSignal("");
   const [domain, setDomain] = createSignal("");
+
+  const domainOptions = createMemo(() => {
+    const items = [{ value: "", label: "选择域名" }];
+    for (const d of props.domains || []) {
+      items.push({ value: d, label: d });
+    }
+    return items;
+  });
 
   return (
     <div class="mx-auto w-full max-w-md rounded-xl border border-white/10 bg-zinc-950/60 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
@@ -48,14 +57,14 @@ export function RegisterCard(props: {
               placeholder="your_name"
               class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
             />
-            <select
+            <DropdownSelect
               value={domain()}
-              onChange={(e) => setDomain(e.currentTarget.value)}
-              class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-            >
-              <option value="">选择域名</option>
-              <For each={props.domains}>{(d) => <option value={d}>{d}</option>}</For>
-            </select>
+              options={domainOptions()}
+              placeholder="选择域名"
+              wrapperClass="relative shrink-0"
+              class="min-w-[140px]"
+              onChange={(v) => setDomain(v)}
+            />
           </div>
           <Show when={props.domains.length === 0}>
             <div class="mt-1 text-[11px] text-zinc-600">系统尚未配置域名，请联系管理员</div>

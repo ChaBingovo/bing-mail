@@ -20,7 +20,10 @@ await new Promise<void>((resolvePromise) => {
 
 const projectRoot = resolve(import.meta.dir, "..", "..", "..");
 process.env.BINGMAIL_SKIP_WEB_BUILD = "1";
-const child = spawn("bunx", ["wrangler", "dev", "--local", "--cwd", projectRoot], { stdio: "inherit", env: process.env });
+const child = spawn("bunx", ["wrangler", "dev", "--local", "--port", "8788", "--cwd", projectRoot], {
+  stdio: "inherit",
+  env: process.env,
+});
 await new Promise<void>((resolvePromise) => {
   child.on("close", () => resolvePromise());
 });

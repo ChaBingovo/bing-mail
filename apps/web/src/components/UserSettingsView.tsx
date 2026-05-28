@@ -1,6 +1,7 @@
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import type { ApiClient } from "../services/api";
 import type { AuthUser } from "../types";
+import { DropdownSelect } from "./DropdownSelect";
 
 export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
   const [oldPassword, setOldPassword] = createSignal("");
@@ -24,6 +25,14 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
     } catch {
       return [] as string[];
     }
+  });
+
+  const domainOptions = createMemo(() => {
+    const items = [{ value: "", label: "选择域名" }];
+    for (const d of domains() || []) {
+      items.push({ value: d, label: d });
+    }
+    return items;
   });
 
   const changePassword = async () => {
@@ -97,14 +106,14 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
               placeholder="alias"
               class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
             />
-            <select
+            <DropdownSelect
               value={aliasDomain()}
-              onChange={(e) => setAliasDomain(e.currentTarget.value)}
-              class="shrink-0 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-            >
-              <option value="">选择域名</option>
-              <For each={domains() || []}>{(d) => <option value={d}>{d}</option>}</For>
-            </select>
+              options={domainOptions()}
+              placeholder="选择域名"
+              wrapperClass="relative shrink-0"
+              class="min-w-[140px]"
+              onChange={(v) => setAliasDomain(v)}
+            />
             <button
               class="shrink-0 rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20"
               onClick={addAlias}
