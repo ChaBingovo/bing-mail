@@ -737,6 +737,8 @@ export async function handleFetch(request: Request, env: Env) {
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
+    const current = await getTurnstileConfig(env);
+
     const modeRaw =
       typeof body === "object" && body && "mode" in body && typeof (body as any).mode === "string"
         ? (body as any).mode
@@ -752,6 +754,14 @@ export async function handleFetch(request: Request, env: Env) {
         : null;
     if (modeRaw !== null && mode === null) return json({ error: "invalid_payload" }, { status: 400 });
     if (mode === null && siteKey === null && secret === null) return json({ error: "invalid_payload" }, { status: 400 });
+
+    const nextMode = mode ?? current.mode;
+    const nextSiteKey = siteKey ?? current.siteKey;
+    const nextSecret = secret ?? current.secret;
+    if (nextMode !== "off") {
+      if (!nextSiteKey) return json({ error: "turnstile_site_key_required" }, { status: 400 });
+      if (!nextSecret) return json({ error: "turnstile_secret_required" }, { status: 400 });
+    }
 
     if (mode !== null) await setSetting(env, "turnstile_mode", mode);
     if (siteKey !== null) await setSetting(env, "turnstile_site_key", siteKey);

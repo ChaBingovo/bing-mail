@@ -120,11 +120,24 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   const saveTurnstile = async () => {
     setError("");
     try {
+      const mode = turnstileModeDraft();
+      const siteKey = turnstileSiteKeyDraft().trim();
+      const secretDraft = turnstileSecretDraft().trim();
+      if (mode !== "off") {
+        if (!siteKey) {
+          setError("Turnstile Site Key 不能为空");
+          return;
+        }
+        if (!turnstile()?.hasSecret && !secretDraft) {
+          setError("Turnstile Secret 不能为空");
+          return;
+        }
+      }
       const payload: Record<string, unknown> = {
-        mode: turnstileModeDraft(),
-        siteKey: turnstileSiteKeyDraft().trim(),
+        mode,
+        siteKey,
       };
-      const secret = turnstileSecretDraft().trim();
+      const secret = secretDraft;
       if (secret) payload.secret = secret;
       await props.api.apiJson("/api/admin/turnstile", {
         method: "PUT",
