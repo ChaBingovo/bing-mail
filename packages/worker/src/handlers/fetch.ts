@@ -65,8 +65,145 @@ function isValidUsername(username: string) {
   return /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
+function getJwtSecretCurrent(env: Env) {
+  const v = typeof env.JWT_SECRET_CURRENT === "string" ? env.JWT_SECRET_CURRENT.trim() : "";
+  if (v) return v;
+  const legacy = typeof env.JWT_SECRET === "string" ? env.JWT_SECRET.trim() : "";
+  return legacy || null;
+}
+
+function getJwtSecretPrevious(env: Env) {
+  const v = typeof env.JWT_SECRET_PREVIOUS === "string" ? env.JWT_SECRET_PREVIOUS.trim() : "";
+  return v || null;
+}
+
 function hasJwtSecret(env: Env) {
-  return typeof env.JWT_SECRET === "string" && env.JWT_SECRET.length > 0;
+  return Boolean(getJwtSecretCurrent(env));
+}
+
+async function verifyJwtRotating(token: string, env: Env) {
+  const current = getJwtSecretCurrent(env);
+  if (!current) return null;
+  const payload = await verifyJwt(token, current);
+  if (payload) return payload;
+  const prev = getJwtSecretPrevious(env);
+  if (!prev) return null;
+  return verifyJwt(token, prev);
+}
+
+function getTurnstileMode(env: Env) {
+  const raw = typeof env.TURNSTILE_MODE === "string" ? env.TURNSTILE_MODE.trim().toLowerCase() : "";
+  if (raw === "always" || raw === "on_failure" || raw === "off") return raw;
+  return "off";
+}
+
+function getTurnstileToken(body: unknown) {
+  const v =
+    typeof body === "object" && body && "turnstileToken" in body && typeof (body as any).turnstileToken === "string"
+      ? (body as any).turnstileToken.trim()
+      : "";
+  return v || null;
+}
+
+function getClientIp(request: Request) {
+  const cf = (request.headers.get("cf-connecting-ip") || "").trim();
+  if (cf) return cf;
+  const xff = (request.headers.get("x-forwarded-for") || "").split(",")[0]?.trim() || "";
+  return xff || null;
+}
+
+function encodeCursor(receivedAt: number, id: string) {
+  return btoa(`${receivedAt}:${id}`);
+}
+
+function decodeCursor(cursor: string | null) {
+  const raw = (cursor || "").trim();
+  if (!raw) return null;
+  let decoded = "";
+  try {
+    decoded = atob(raw);
+  } catch {
+    return null;
+  }
+  const idx = decoded.indexOf(":");
+  if (idx <= 0) return null;
+  const tsRaw = decoded.slice(0, idx);
+  const id = decoded.slice(idx + 1).trim();
+  const receivedAt = Number(tsRaw);
+  if (!Number.isFinite(receivedAt) || receivedAt <= 0) return null;
+  if (!id) return null;
+  return { receivedAt, id };
+}
+
+async function verifyTurnstile(secret: string, token: string, ip: string | null) {
+  const form = new URLSearchParams();
+  form.set("secret", secret);
+  form.set("response", token);
+  if (ip) form.set("remoteip", ip);
+  const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+  });
+  if (!res.ok) return false;
+  const data = (await res.json()) as { success?: unknown };
+  return data?.success === true;
+}
+
+async function requireTurnstile(
+  request: Request,
+  env: Env,
+  body: unknown,
+  required: boolean,
+): Promise<Response | null> {
+  const mode = getTurnstileMode(env);
+  if (mode === "off") return null;
+  const secret = typeof env.TURNSTILE_SECRET === "string" ? env.TURNSTILE_SECRET.trim() : "";
+  if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+  const token = getTurnstileToken(body);
+  if (!token) {
+    if (!required) return null;
+    return json({ error: "turnstile_required" }, { status: 400 });
+  }
+  const ok = await verifyTurnstile(secret, token, getClientIp(request));
+  if (!ok) return json({ error: "turnstile_failed" }, { status: 403 });
+  return null;
+}
+
+function rateKeyUser(username: string) {
+  return `u:${username.trim().toLowerCase()}`;
+}
+
+function rateKeyIp(ip: string) {
+  return `ip:${ip.trim()}`;
+}
+
+async function authRateCheck(env: Env, key: string) {
+  try {
+    const id = env.AUTH_RATE.idFromName(key);
+    const stub = env.AUTH_RATE.get(id);
+    const res = await stub.fetch("https://auth-rate/check", { method: "POST" });
+    const data = (await res.json()) as { limited?: unknown };
+    return data?.limited === true;
+  } catch {
+    return false;
+  }
+}
+
+async function authRateFail(env: Env, key: string) {
+  try {
+    const id = env.AUTH_RATE.idFromName(key);
+    const stub = env.AUTH_RATE.get(id);
+    await stub.fetch("https://auth-rate/fail", { method: "POST" });
+  } catch {}
+}
+
+async function authRateReset(env: Env, key: string) {
+  try {
+    const id = env.AUTH_RATE.idFromName(key);
+    const stub = env.AUTH_RATE.get(id);
+    await stub.fetch("https://auth-rate/reset", { method: "POST" });
+  } catch {}
 }
 
 function normalizeDomain(input: string) {
@@ -220,7 +357,7 @@ async function requireAuth(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
   const token = getBearerToken(request);
   if (!token) return null;
-  const payload = await verifyJwt(token, env.JWT_SECRET);
+  const payload = await verifyJwtRotating(token, env);
   if (!payload) return null;
   return payload;
 }
@@ -230,7 +367,7 @@ async function requireAuthWs(request: Request, env: Env) {
   const url = new URL(request.url);
   const token = getBearerToken(request) || (url.searchParams.get("token") || "").trim();
   if (!token) return null;
-  const payload = await verifyJwt(token, env.JWT_SECRET);
+  const payload = await verifyJwtRotating(token, env);
   if (!payload) return null;
   return payload;
 }
@@ -283,6 +420,9 @@ export async function handleFetch(request: Request, env: Env) {
 
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const turnstileRes = await requireTurnstile(request, env, body, getTurnstileMode(env) !== "off");
+    if (turnstileRes) return turnstileRes;
 
     const username = toUsername(body);
     const password = toPassword(body);
@@ -352,7 +492,9 @@ export async function handleFetch(request: Request, env: Env) {
       .run();
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-    const token = await signJwt({ sub: id, username, isAdmin: true, exp }, env.JWT_SECRET);
+    const secret = getJwtSecretCurrent(env);
+    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+    const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
     return json({ user: { id, username, isAdmin: true }, token }, { status: 201 });
   }
 
@@ -363,6 +505,9 @@ export async function handleFetch(request: Request, env: Env) {
     if (!allowRegister) return json({ error: "register_disabled" }, { status: 403 });
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const turnstileRes = await requireTurnstile(request, env, body, getTurnstileMode(env) !== "off");
+    if (turnstileRes) return turnstileRes;
 
     const username = toUsername(body);
     const password = toPassword(body);
@@ -408,7 +553,9 @@ export async function handleFetch(request: Request, env: Env) {
       .run();
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-    const token = await signJwt({ sub: id, username, isAdmin: false, exp }, env.JWT_SECRET);
+    const secret = getJwtSecretCurrent(env);
+    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+    const token = await signJwt({ sub: id, username, isAdmin: false, exp }, secret);
     return json({ user: { id, username, isAdmin: false }, token }, { status: 201 });
   }
 
@@ -418,21 +565,42 @@ export async function handleFetch(request: Request, env: Env) {
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
+    const mode = getTurnstileMode(env);
+    const required = mode === "always";
+    const turnstileRes = await requireTurnstile(request, env, body, required);
+    if (turnstileRes) return turnstileRes;
+
     const username = toUsername(body);
     const password = toPassword(body);
     if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
     if (typeof password !== "string" || password.length < 1) return json({ error: "invalid_password" }, { status: 400 });
 
+    const keys: string[] = [rateKeyUser(username)];
+    const ip = getClientIp(request);
+    if (ip) keys.push(rateKeyIp(ip));
+    for (const k of keys) {
+      if (await authRateCheck(env, k)) return json({ error: "rate_limited" }, { status: 429 });
+    }
+
     const user = await env.DB.prepare("SELECT id, password_hash, is_admin FROM users WHERE username = ?1 LIMIT 1")
       .bind(username)
       .first<{ id: string; password_hash: string; is_admin: number }>();
-    if (!user?.id) return json({ error: "unauthorized" }, { status: 401 });
+    if (!user?.id) {
+      await Promise.all(keys.map((k) => authRateFail(env, k)));
+      return json({ error: "unauthorized" }, { status: 401 });
+    }
     const ok = await verifyPassword(password, user.password_hash);
-    if (!ok) return json({ error: "unauthorized" }, { status: 401 });
+    if (!ok) {
+      await Promise.all(keys.map((k) => authRateFail(env, k)));
+      return json({ error: "unauthorized" }, { status: 401 });
+    }
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const isAdmin = Boolean(user.is_admin);
-    const token = await signJwt({ sub: user.id, username, isAdmin, exp }, env.JWT_SECRET);
+    const secret = getJwtSecretCurrent(env);
+    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+    const token = await signJwt({ sub: user.id, username, isAdmin, exp }, secret);
+    await Promise.all(keys.map((k) => authRateReset(env, k)));
     return json({ user: { id: user.id, username, isAdmin }, token });
   }
 
@@ -751,6 +919,7 @@ export async function handleFetch(request: Request, env: Env) {
     if (!mailbox?.id) return json({ messages: [], address: null });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
+    const cur = decodeCursor(url.searchParams.get("cursor"));
     let res: D1Result<{
       id: string;
       status: "PENDING" | "SUCCESS";
@@ -763,20 +932,38 @@ export async function handleFetch(request: Request, env: Env) {
       ai_service?: string | null;
     }>;
     try {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
+      if (cur) {
+        res = await env.DB.prepare(
+          "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
+        )
+          .bind(mailbox.id, limit, cur.receivedAt, cur.id)
+          .all();
+      } else {
+        res = await env.DB.prepare(
+          "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
+        )
+          .bind(mailbox.id, limit)
+          .all();
+      }
     } catch (err) {
       if (!isMissingAiColumnsError(err)) throw err;
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
+      if (cur) {
+        res = await env.DB.prepare(
+          "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
+        )
+          .bind(mailbox.id, limit, cur.receivedAt, cur.id)
+          .all();
+      } else {
+        res = await env.DB.prepare(
+          "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
+        )
+          .bind(mailbox.id, limit)
+          .all();
+      }
     }
 
+    const last = res.results[res.results.length - 1];
+    const nextCursor = res.results.length >= limit && last ? encodeCursor(last.received_at, last.id) : null;
     return json({
       address: mailbox.address,
       messages: res.results.map((r) => ({
@@ -790,6 +977,7 @@ export async function handleFetch(request: Request, env: Env) {
         aiCode: r.ai_code ?? null,
         aiService: r.ai_service ?? null,
       })),
+      nextCursor,
     });
   }
 
@@ -1105,6 +1293,7 @@ export async function handleFetch(request: Request, env: Env) {
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
+    const cur = decodeCursor(url.searchParams.get("cursor"));
     let fts: D1Result<{
       id: string;
       subject: string | null;
@@ -1116,20 +1305,38 @@ export async function handleFetch(request: Request, env: Env) {
       ai_service?: string | null;
     }>;
     try {
-      fts = await env.DB.prepare(
-        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC LIMIT ?3",
-      )
-        .bind(q, mailbox.id, limit)
-        .all();
+      if (cur) {
+        fts = await env.DB.prepare(
+          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 AND (m.received_at < ?4 OR (m.received_at = ?4 AND m.id < ?5)) ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+        )
+          .bind(q, mailbox.id, limit, cur.receivedAt, cur.id)
+          .all();
+      } else {
+        fts = await env.DB.prepare(
+          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+        )
+          .bind(q, mailbox.id, limit)
+          .all();
+      }
     } catch (err) {
       if (!isMissingAiColumnsError(err)) throw err;
-      fts = await env.DB.prepare(
-        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC LIMIT ?3",
-      )
-        .bind(q, mailbox.id, limit)
-        .all();
+      if (cur) {
+        fts = await env.DB.prepare(
+          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 AND (m.received_at < ?4 OR (m.received_at = ?4 AND m.id < ?5)) ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+        )
+          .bind(q, mailbox.id, limit, cur.receivedAt, cur.id)
+          .all();
+      } else {
+        fts = await env.DB.prepare(
+          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+        )
+          .bind(q, mailbox.id, limit)
+          .all();
+      }
     }
 
+    const last = fts.results[fts.results.length - 1];
+    const nextCursor = fts.results.length >= limit && last ? encodeCursor(last.received_at, last.id) : null;
     return json({
       messages: fts.results.map((r) => ({
         id: r.id,
@@ -1141,6 +1348,7 @@ export async function handleFetch(request: Request, env: Env) {
         aiCode: r.ai_code ?? null,
         aiService: r.ai_service ?? null,
       })),
+      nextCursor,
     });
   }
 

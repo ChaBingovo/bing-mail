@@ -16,6 +16,9 @@ name = "EMAIL"
 [vars]
 HTML_INLINE_LIMIT = "102400"
 PARSE_QUEUE_MAX_ATTEMPTS = "5"
+WS_MAX_CONNECTIONS = "3"
+LOGIN_FAIL_LIMIT = "5"
+LOGIN_FAIL_WINDOW_MS = "600000"
 
 [ai]
 binding = "AI"
@@ -45,3 +48,11 @@ class_name = "MailEventsDO"
 [[migrations]]
 tag = "v1"
 new_classes = ["MailEventsDO"]
+
+[[durable_objects.bindings]]
+name = "AUTH_RATE"
+class_name = "AuthRateLimitDO"
+
+[[migrations]]
+tag = "v2"
+new_classes = ["AuthRateLimitDO"]

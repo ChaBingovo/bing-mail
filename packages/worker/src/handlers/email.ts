@@ -49,16 +49,25 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const messageId = crypto.randomUUID();
   const receivedAt = Date.now();
   const rawKey = `raw/${messageId}.eml`;
+  const requestId = crypto.randomUUID();
 
   ctx.waitUntil(
     (async () => {
-      await env.MAIL_BUCKET.put(rawKey, message.raw);
-      await env.DB.prepare(
-        "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
-      )
-        .bind(messageId, target.id, receivedAt, rawKey)
-        .run();
-      await env.PARSE_QUEUE.send({ messageId });
+      try {
+        await env.MAIL_BUCKET.put(rawKey, message.raw);
+        await env.DB.prepare(
+          "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
+        )
+          .bind(messageId, target.id, receivedAt, rawKey)
+          .run();
+        await env.PARSE_QUEUE.send({ messageId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          JSON.stringify({ level: "error", event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg }),
+        );
+        throw err;
+      }
     })(),
   );
 }

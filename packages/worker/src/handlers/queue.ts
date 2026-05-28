@@ -39,10 +39,13 @@ function extractJsonObject(value: string) {
 export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: Env, _ctx: ExecutionContext) {
   await Promise.allSettled(
     batch.messages.map(async (msg) => {
+      const requestId = crypto.randomUUID();
       try {
         await processOne(msg.body.messageId, env);
         msg.ack();
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(JSON.stringify({ level: "error", event: "queue_process_failed", requestId, messageId: msg.body.messageId, error: message }));
         msg.retry();
       }
     }),

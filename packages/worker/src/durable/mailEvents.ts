@@ -5,9 +5,12 @@ type NotifyPayload = {
 
 export class MailEventsDO {
   private state: DurableObjectState;
+  private maxConnections: number;
 
-  constructor(state: DurableObjectState, _env: unknown) {
+  constructor(state: DurableObjectState, env: Record<string, unknown>) {
     this.state = state;
+    const raw = Number(typeof env.WS_MAX_CONNECTIONS === "string" ? env.WS_MAX_CONNECTIONS.trim() : env.WS_MAX_CONNECTIONS);
+    this.maxConnections = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 3;
   }
 
   async fetch(request: Request) {
@@ -16,6 +19,10 @@ export class MailEventsDO {
     if (url.pathname === "/connect") {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
         return new Response("upgrade required", { status: 426 });
+      }
+
+      if (this.state.getWebSockets().length >= this.maxConnections) {
+        return new Response("rate limited", { status: 429 });
       }
 
       const pair = new WebSocketPair();
@@ -60,4 +67,3 @@ export class MailEventsDO {
     return new Response("not found", { status: 404 });
   }
 }
-
