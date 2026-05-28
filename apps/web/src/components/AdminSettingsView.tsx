@@ -31,6 +31,11 @@ export function AdminSettingsView(props: { api: ApiClient }) {
     return data;
   });
 
+  const [turnstile, { refetch: refetchTurnstile }] = createResource(async () => {
+    const data = await props.api.apiJson<{ mode: string; siteKey: string; hasSecret: boolean }>("/api/admin/turnstile");
+    return data;
+  });
+
   const [domains, { refetch: refetchDomains }] = createResource(async () => {
     const data = await props.api.apiJson<{ domains: AdminDomainRow[] }>("/api/admin/domains");
     return data.domains;
@@ -67,10 +72,21 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   const [mbMailboxDomain, setMbMailboxDomain] = createSignal("");
   const [mbUserId, setMbUserId] = createSignal("");
   const [maxAliasesDraft, setMaxAliasesDraft] = createSignal(0);
+  const [turnstileModeDraft, setTurnstileModeDraft] = createSignal("off");
+  const [turnstileSiteKeyDraft, setTurnstileSiteKeyDraft] = createSignal("");
+  const [turnstileSecretDraft, setTurnstileSecretDraft] = createSignal("");
 
   createEffect(() => {
     const v = settings()?.maxAliases;
     if (typeof v === "number") setMaxAliasesDraft(v);
+  });
+
+  createEffect(() => {
+    const t = turnstile();
+    if (!t) return;
+    if (typeof t.mode === "string") setTurnstileModeDraft(t.mode);
+    if (typeof t.siteKey === "string") setTurnstileSiteKeyDraft(t.siteKey);
+    setTurnstileSecretDraft("");
   });
 
   const toggleRegister = async (next: boolean) => {
@@ -96,6 +112,27 @@ export function AdminSettingsView(props: { api: ApiClient }) {
         body: JSON.stringify({ maxAliases: maxAliasesDraft() }),
       });
       refetchSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+    }
+  };
+
+  const saveTurnstile = async () => {
+    setError("");
+    try {
+      const payload: Record<string, unknown> = {
+        mode: turnstileModeDraft(),
+        siteKey: turnstileSiteKeyDraft().trim(),
+      };
+      const secret = turnstileSecretDraft().trim();
+      if (secret) payload.secret = secret;
+      await props.api.apiJson("/api/admin/turnstile", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setTurnstileSecretDraft("");
+      refetchTurnstile();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     }
@@ -228,6 +265,48 @@ export function AdminSettingsView(props: { api: ApiClient }) {
               onClick={saveMaxAliases}
             >
               保存
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div class="text-sm font-semibold text-zinc-100">Turnstile 人机验证</div>
+          <div class="mt-1 text-xs text-zinc-500">用于注册/登录/初始化的防刷验证（Site Key 可公开，Secret 仅后端使用）</div>
+          <div class="mt-4 grid grid-cols-1 gap-3">
+            <div class="flex gap-2">
+              <DropdownSelect
+                value={turnstileModeDraft()}
+                options={[
+                  { value: "off", label: "off（关闭）" },
+                  { value: "always", label: "always（总是）" },
+                  { value: "on_failure", label: "on_failure（失败后）" },
+                ]}
+                wrapperClass="relative shrink-0"
+                class="min-w-[190px]"
+                onChange={(v) => setTurnstileModeDraft(v)}
+              />
+              <Show when={turnstile()?.hasSecret} fallback={<div class="self-center text-xs text-zinc-500">未配置 Secret</div>}>
+                <div class="self-center text-xs text-zinc-500">已配置 Secret</div>
+              </Show>
+            </div>
+            <input
+              value={turnstileSiteKeyDraft()}
+              onInput={(e) => setTurnstileSiteKeyDraft(e.currentTarget.value)}
+              placeholder="Turnstile Site Key"
+              class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            <input
+              value={turnstileSecretDraft()}
+              onInput={(e) => setTurnstileSecretDraft(e.currentTarget.value)}
+              placeholder="Turnstile Secret（留空则不修改）"
+              type="password"
+              class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            <button
+              class="rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20"
+              onClick={saveTurnstile}
+            >
+              保存 Turnstile 配置
             </button>
           </div>
         </div>

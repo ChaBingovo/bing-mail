@@ -91,10 +91,26 @@ async function verifyJwtRotating(token: string, env: Env) {
   return verifyJwt(token, prev);
 }
 
-function getTurnstileMode(env: Env) {
-  const raw = typeof env.TURNSTILE_MODE === "string" ? env.TURNSTILE_MODE.trim().toLowerCase() : "";
-  if (raw === "always" || raw === "on_failure" || raw === "off") return raw;
-  return "off";
+function parseTurnstileMode(raw: string) {
+  const v = (raw || "").trim().toLowerCase();
+  if (v === "always" || v === "on_failure" || v === "off") return v;
+  return null;
+}
+
+async function getTurnstileConfig(env: Env) {
+  const modeFromDb = parseTurnstileMode((await getSetting(env, "turnstile_mode")) || "");
+  const modeFromEnv = parseTurnstileMode(typeof env.TURNSTILE_MODE === "string" ? env.TURNSTILE_MODE : "");
+  const mode = modeFromDb ?? modeFromEnv ?? "off";
+
+  const siteKeyFromDb = ((await getSetting(env, "turnstile_site_key")) || "").trim();
+  const siteKeyFromEnv = (typeof env.TURNSTILE_SITE_KEY === "string" ? env.TURNSTILE_SITE_KEY : "").trim();
+  const siteKey = siteKeyFromDb || siteKeyFromEnv || "";
+
+  const secretFromDb = ((await getSetting(env, "turnstile_secret")) || "").trim();
+  const secretFromEnv = (typeof env.TURNSTILE_SECRET === "string" ? env.TURNSTILE_SECRET : "").trim();
+  const secret = secretFromDb || secretFromEnv || "";
+
+  return { mode, siteKey, secret, hasSecret: Boolean(secret) };
 }
 
 function getTurnstileToken(body: unknown) {
@@ -150,22 +166,15 @@ async function verifyTurnstile(secret: string, token: string, ip: string | null)
   return data?.success === true;
 }
 
-async function requireTurnstile(
-  request: Request,
-  env: Env,
-  body: unknown,
-  required: boolean,
-): Promise<Response | null> {
-  const mode = getTurnstileMode(env);
-  if (mode === "off") return null;
-  const secret = typeof env.TURNSTILE_SECRET === "string" ? env.TURNSTILE_SECRET.trim() : "";
-  if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+async function requireTurnstileToken(request: Request, secret: string, body: unknown, required: boolean): Promise<Response | null> {
+  const s = (secret || "").trim();
+  if (!s) return json({ error: "server_misconfigured" }, { status: 500 });
   const token = getTurnstileToken(body);
   if (!token) {
     if (!required) return null;
     return json({ error: "turnstile_required" }, { status: 400 });
   }
-  const ok = await verifyTurnstile(secret, token, getClientIp(request));
+  const ok = await verifyTurnstile(s, token, getClientIp(request));
   if (!ok) return json({ error: "turnstile_failed" }, { status: 403 });
   return null;
 }
@@ -241,6 +250,19 @@ async function getSetting(env: Env, key: string) {
     return typeof row?.value === "string" ? row.value : null;
   } catch (err) {
     if (isMissingAppSettingsTableError(err)) return null;
+    throw err;
+  }
+}
+
+async function setSetting(env: Env, key: string, value: string) {
+  try {
+    await env.DB.prepare(
+      "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+      .bind(key, value, Date.now())
+      .run();
+  } catch (err) {
+    if (isMissingAppSettingsTableError(err)) return;
     throw err;
   }
 }
@@ -393,6 +415,11 @@ export async function handleFetch(request: Request, env: Env) {
     return json({ initialized, allowRegister });
   }
 
+  if (pathname === "/api/turnstile/config" && request.method === "GET") {
+    const cfg = await getTurnstileConfig(env);
+    return json({ mode: cfg.mode, siteKey: cfg.siteKey }, { headers: { "cache-control": "no-store" } });
+  }
+
   if (pathname === "/api/setup/domains" && request.method === "POST") {
     if (await isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
     const body = await readJsonBody(request);
@@ -421,8 +448,11 @@ export async function handleFetch(request: Request, env: Env) {
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
-    const turnstileRes = await requireTurnstile(request, env, body, getTurnstileMode(env) !== "off");
-    if (turnstileRes) return turnstileRes;
+    const turnstile = await getTurnstileConfig(env);
+    if (turnstile.mode !== "off") {
+      const turnstileRes = await requireTurnstileToken(request, turnstile.secret, body, true);
+      if (turnstileRes) return turnstileRes;
+    }
 
     const username = toUsername(body);
     const password = toPassword(body);
@@ -506,8 +536,11 @@ export async function handleFetch(request: Request, env: Env) {
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
-    const turnstileRes = await requireTurnstile(request, env, body, getTurnstileMode(env) !== "off");
-    if (turnstileRes) return turnstileRes;
+    const turnstile = await getTurnstileConfig(env);
+    if (turnstile.mode !== "off") {
+      const turnstileRes = await requireTurnstileToken(request, turnstile.secret, body, true);
+      if (turnstileRes) return turnstileRes;
+    }
 
     const username = toUsername(body);
     const password = toPassword(body);
@@ -565,11 +598,6 @@ export async function handleFetch(request: Request, env: Env) {
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
-    const mode = getTurnstileMode(env);
-    const required = mode === "always";
-    const turnstileRes = await requireTurnstile(request, env, body, required);
-    if (turnstileRes) return turnstileRes;
-
     const username = toUsername(body);
     const password = toPassword(body);
     if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
@@ -578,8 +606,22 @@ export async function handleFetch(request: Request, env: Env) {
     const keys: string[] = [rateKeyUser(username)];
     const ip = getClientIp(request);
     if (ip) keys.push(rateKeyIp(ip));
+
+    let hasFailures = false;
     for (const k of keys) {
-      if (await authRateCheck(env, k)) return json({ error: "rate_limited" }, { status: 429 });
+      const id = env.AUTH_RATE.idFromName(k);
+      const stub = env.AUTH_RATE.get(id);
+      const res = await stub.fetch("https://auth-rate/check", { method: "POST" });
+      const data = (await res.json()) as { limited?: unknown; count?: unknown };
+      if (data?.limited === true) return json({ error: "rate_limited" }, { status: 429 });
+      if (typeof data?.count === "number" && data.count > 0) hasFailures = true;
+    }
+
+    const turnstile = await getTurnstileConfig(env);
+    const required = turnstile.mode === "always" || (turnstile.mode === "on_failure" && hasFailures);
+    if (turnstile.mode !== "off") {
+      const turnstileRes = await requireTurnstileToken(request, turnstile.secret, body, required);
+      if (turnstileRes) return turnstileRes;
     }
 
     const user = await env.DB.prepare("SELECT id, password_hash, is_admin FROM users WHERE username = ?1 LIMIT 1")
@@ -680,6 +722,43 @@ export async function handleFetch(request: Request, env: Env) {
     const nextAllowRegister = (await getSetting(env, "allow_register")) === "1";
     const nextMaxAliases = await getMaxAliases(env);
     return json({ allowRegister: nextAllowRegister, maxAliases: nextMaxAliases });
+  }
+
+  if (pathname === "/api/admin/turnstile" && request.method === "GET") {
+    const auth = await requireAuth(request, env);
+    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const cfg = await getTurnstileConfig(env);
+    return json({ mode: cfg.mode, siteKey: cfg.siteKey, hasSecret: cfg.hasSecret });
+  }
+
+  if (pathname === "/api/admin/turnstile" && request.method === "PUT") {
+    const auth = await requireAuth(request, env);
+    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const body = await readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const modeRaw =
+      typeof body === "object" && body && "mode" in body && typeof (body as any).mode === "string"
+        ? (body as any).mode
+        : null;
+    const mode = typeof modeRaw === "string" ? parseTurnstileMode(modeRaw) : null;
+    const siteKey =
+      typeof body === "object" && body && "siteKey" in body && typeof (body as any).siteKey === "string"
+        ? (body as any).siteKey.trim()
+        : null;
+    const secret =
+      typeof body === "object" && body && "secret" in body && typeof (body as any).secret === "string"
+        ? (body as any).secret.trim()
+        : null;
+    if (modeRaw !== null && mode === null) return json({ error: "invalid_payload" }, { status: 400 });
+    if (mode === null && siteKey === null && secret === null) return json({ error: "invalid_payload" }, { status: 400 });
+
+    if (mode !== null) await setSetting(env, "turnstile_mode", mode);
+    if (siteKey !== null) await setSetting(env, "turnstile_site_key", siteKey);
+    if (secret !== null) await setSetting(env, "turnstile_secret", secret);
+
+    const cfg = await getTurnstileConfig(env);
+    return json({ mode: cfg.mode, siteKey: cfg.siteKey, hasSecret: cfg.hasSecret });
   }
 
   if (pathname === "/api/admin/domains" && request.method === "GET") {

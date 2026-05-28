@@ -19,6 +19,7 @@ export type Env = {
   JWT_SECRET_PREVIOUS?: string;
   TURNSTILE_MODE?: string;
   TURNSTILE_SECRET?: string;
+  TURNSTILE_SITE_KEY?: string;
   WS_MAX_CONNECTIONS?: string;
   LOGIN_FAIL_LIMIT?: string;
   LOGIN_FAIL_WINDOW_MS?: string;
