@@ -37,9 +37,16 @@ function extractJsonObject(value: string) {
 }
 
 export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: Env, _ctx: ExecutionContext) {
-  for (const msg of batch.messages) {
-    await processOne(msg.body.messageId, env);
-  }
+  await Promise.allSettled(
+    batch.messages.map(async (msg) => {
+      try {
+        await processOne(msg.body.messageId, env);
+        msg.ack();
+      } catch {
+        msg.retry();
+      }
+    }),
+  );
 }
 
 async function processOne(messageId: string, env: Env) {
