@@ -2,39 +2,9 @@ import type { Env } from "../env";
 import { json, text } from "../http";
 import { getBearerToken, hashPassword, signJwt, verifyJwt, verifyPassword } from "../auth";
 
-function isMissingAiColumnsError(err: unknown) {
+function isDbSchemaError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such column: ai_code") || msg.includes("no such column: ai_service");
-}
-
-function isMissingIsAdminColumnError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such column: is_admin");
-}
-
-function isMissingAppSettingsTableError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such table: app_settings");
-}
-
-function isMissingDomainsTableError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such table: domains");
-}
-
-function isMissingUsersTableError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such table: users");
-}
-
-function isMissingMailboxesTableError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such table: mailboxes");
-}
-
-function isMissingMessagesTableError(err: unknown) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("no such table: messages");
+  return msg.includes("no such table:") || msg.includes("no such column:");
 }
 
 async function readJsonBody(request: Request) {
@@ -243,28 +213,18 @@ function makeEmailAddress(local: string, domain: string) {
 }
 
 async function getSetting(env: Env, key: string) {
-  try {
-    const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?1 LIMIT 1")
-      .bind(key)
-      .first<{ value: string }>();
-    return typeof row?.value === "string" ? row.value : null;
-  } catch (err) {
-    if (isMissingAppSettingsTableError(err)) return null;
-    throw err;
-  }
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?1 LIMIT 1")
+    .bind(key)
+    .first<{ value: string }>();
+  return typeof row?.value === "string" ? row.value : null;
 }
 
 async function setSetting(env: Env, key: string, value: string) {
-  try {
-    await env.DB.prepare(
-      "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-      .bind(key, value, Date.now())
-      .run();
-  } catch (err) {
-    if (isMissingAppSettingsTableError(err)) return;
-    throw err;
-  }
+  await env.DB.prepare(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  )
+    .bind(key, value, Date.now())
+    .run();
 }
 
 function parseSettingInt(raw: string | null, fallback: number) {
@@ -280,61 +240,38 @@ async function getMaxAliases(env: Env) {
 }
 
 async function isInitialized(env: Env) {
-  try {
-    const row = await env.DB.prepare("SELECT 1 AS ok FROM users WHERE is_admin = 1 LIMIT 1").first<{ ok: 1 }>();
-    return Boolean(row?.ok);
-  } catch (err) {
-    if (isMissingUsersTableError(err)) return false;
-    if (isMissingIsAdminColumnError(err)) return false;
-    throw err;
-  }
+  const row = await env.DB.prepare("SELECT 1 AS ok FROM users WHERE is_admin = 1 LIMIT 1").first<{ ok: 1 }>();
+  return Boolean(row?.ok);
 }
 
 async function listActiveDomains(env: Env) {
-  try {
-    const res = await env.DB.prepare("SELECT domain FROM domains WHERE is_active = 1 ORDER BY domain ASC").all<{
-      domain: string;
-    }>();
-    return res.results.map((r) => r.domain).filter((d) => typeof d === "string" && d.length > 0);
-  } catch (err) {
-    if (isMissingDomainsTableError(err)) return [];
-    throw err;
-  }
+  const res = await env.DB.prepare("SELECT domain FROM domains WHERE is_active = 1 ORDER BY domain ASC").all<{
+    domain: string;
+  }>();
+  return res.results.map((r) => r.domain).filter((d) => typeof d === "string" && d.length > 0);
 }
 
 async function requireActiveDomain(env: Env, domain: string) {
   const d = normalizeDomain(domain);
   if (!isValidDomain(d)) return null;
-  try {
-    const row = await env.DB.prepare("SELECT 1 AS ok FROM domains WHERE domain = ?1 AND is_active = 1 LIMIT 1")
-      .bind(d)
-      .first<{ ok: 1 }>();
-    return row?.ok ? d : null;
-  } catch (err) {
-    if (isMissingDomainsTableError(err)) return null;
-    throw err;
-  }
+  const row = await env.DB.prepare("SELECT 1 AS ok FROM domains WHERE domain = ?1 AND is_active = 1 LIMIT 1")
+    .bind(d)
+    .first<{ ok: 1 }>();
+  return row?.ok ? d : null;
 }
 
 async function getMailboxAuth(env: Env, address: string) {
-  try {
-    const mailbox = await env.DB.prepare(
-      "SELECT id, user_id, address FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1",
-    )
-      .bind(address)
-      .first<{ id: string; user_id: string | null; address: string }>();
-    if (mailbox?.id) return mailbox;
+  const mailbox = await env.DB.prepare("SELECT id, user_id, address FROM mailboxes WHERE address = ?1 AND is_active = 1 LIMIT 1")
+    .bind(address)
+    .first<{ id: string; user_id: string | null; address: string }>();
+  if (mailbox?.id) return mailbox;
 
-    const alias = await env.DB.prepare(
-      "SELECT m.id, m.user_id, m.address FROM mailbox_aliases a JOIN mailboxes m ON m.id = a.mailbox_id WHERE a.address = ?1 AND a.is_active = 1 AND m.is_active = 1 LIMIT 1",
-    )
-      .bind(address)
-      .first<{ id: string; user_id: string | null; address: string }>();
-    return alias?.id ? alias : null;
-  } catch (err) {
-    if (isMissingMailboxesTableError(err)) return null;
-    throw err;
-  }
+  const alias = await env.DB.prepare(
+    "SELECT m.id, m.user_id, m.address FROM mailbox_aliases a JOIN mailboxes m ON m.id = a.mailbox_id WHERE a.address = ?1 AND a.is_active = 1 AND m.is_active = 1 LIMIT 1",
+  )
+    .bind(address)
+    .first<{ id: string; user_id: string | null; address: string }>();
+  return alias?.id ? alias : null;
 }
 
 async function requireMailboxAccess(env: Env, auth: { sub: string; isAdmin?: boolean }, address: string) {
@@ -347,26 +284,13 @@ async function requireMailboxAccess(env: Env, auth: { sub: string; isAdmin?: boo
 }
 
 async function requireMessageAccess(env: Env, auth: { sub: string; isAdmin?: boolean }, messageId: string) {
-  let row:
-    | ({
-        mailbox_user_id: string | null;
-      } & Record<string, any>)
-    | null;
-  try {
-    row = await env.DB.prepare(
-      "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
-    )
-      .bind(messageId)
-      .first();
-  } catch (err) {
-    if (isMissingMessagesTableError(err) || isMissingMailboxesTableError(err)) return null;
-    if (!isMissingAiColumnsError(err)) throw err;
-    row = await env.DB.prepare(
-      "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.html_r2_key, m.html_inline, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
-    )
-      .bind(messageId)
-      .first();
-  }
+  const row = await env.DB.prepare(
+    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
+  )
+    .bind(messageId)
+    .first<{
+      mailbox_user_id: string | null;
+    } & Record<string, any>>();
   if (!row?.id) return null;
   if (!auth.isAdmin) {
     if (!row.mailbox_user_id) return null;
@@ -397,136 +321,121 @@ async function requireAuthWs(request: Request, env: Env) {
 export async function handleFetch(request: Request, env: Env) {
   if (request.method === "OPTIONS") return text("", { status: 204 });
 
-  const url = new URL(request.url);
-  const pathname = url.pathname;
+  try {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
 
-  if (!pathname.startsWith("/api")) {
-    return env.ASSETS.fetch(request);
-  }
+    if (!pathname.startsWith("/api")) {
+      return env.ASSETS.fetch(request);
+    }
 
-  if (pathname === "/api/domains" && request.method === "GET") {
-    const domains = await listActiveDomains(env);
-    return json({ domains });
-  }
+    if (pathname === "/api/domains" && request.method === "GET") {
+      const domains = await listActiveDomains(env);
+      return json({ domains });
+    }
 
-  if (pathname === "/api/setup/status" && request.method === "GET") {
-    const initialized = await isInitialized(env);
-    const allowRegister = initialized ? (await getSetting(env, "allow_register")) === "1" : false;
-    return json({ initialized, allowRegister });
-  }
+    if (pathname === "/api/setup/status" && request.method === "GET") {
+      const initialized = await isInitialized(env);
+      const allowRegister = initialized ? (await getSetting(env, "allow_register")) === "1" : false;
+      return json({ initialized, allowRegister });
+    }
 
-  if (pathname === "/api/turnstile/config" && request.method === "GET") {
-    const cfg = await getTurnstileConfig(env);
-    return json({ mode: cfg.mode, siteKey: cfg.siteKey }, { headers: { "cache-control": "no-store" } });
-  }
+    if (pathname === "/api/turnstile/config" && request.method === "GET") {
+      const cfg = await getTurnstileConfig(env);
+      return json({ mode: cfg.mode, siteKey: cfg.siteKey }, { headers: { "cache-control": "no-store" } });
+    }
 
-  if (pathname === "/api/setup/domains" && request.method === "POST") {
-    if (await isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
-    const body = await readJsonBody(request);
-    if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? normalizeDomain((body as any).domain)
-        : "";
-    if (!isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
-    try {
+    if (pathname === "/api/setup/domains" && request.method === "POST") {
+      if (await isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
+      const body = await readJsonBody(request);
+      if (!body) return json({ error: "invalid_json" }, { status: 400 });
+      const domain =
+        typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
+          ? normalizeDomain((body as any).domain)
+          : "";
+      if (!isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
       await env.DB.prepare("INSERT OR IGNORE INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)")
         .bind(crypto.randomUUID(), domain)
         .run();
-    } catch (err) {
-      if (isMissingDomainsTableError(err)) return json({ error: "server_misconfigured" }, { status: 500 });
-      throw err;
-    }
-    return json({ domain });
-  }
-
-  if (pathname === "/api/setup/init" && request.method === "POST") {
-    if (!hasJwtSecret(env)) return json({ error: "server_misconfigured" }, { status: 500 });
-    const initialized = await isInitialized(env);
-    if (initialized) return json({ error: "already_initialized" }, { status: 409 });
-
-    const body = await readJsonBody(request);
-    if (!body) return json({ error: "invalid_json" }, { status: 400 });
-
-    const turnstile = await getTurnstileConfig(env);
-    if (turnstile.mode !== "off") {
-      const turnstileRes = await requireTurnstileToken(request, turnstile.secret, body, true);
-      if (turnstileRes) return turnstileRes;
+      return json({ domain });
     }
 
-    const username = toUsername(body);
-    const password = toPassword(body);
-    if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
-    if (typeof password !== "string" || password.length < 8 || password.length > 72) {
-      return json({ error: "invalid_password" }, { status: 400 });
-    }
+    if (pathname === "/api/setup/init" && request.method === "POST") {
+      if (!hasJwtSecret(env)) return json({ error: "server_misconfigured" }, { status: 500 });
+      const initialized = await isInitialized(env);
+      if (initialized) return json({ error: "already_initialized" }, { status: 409 });
 
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? normalizeDomain((body as any).domain)
-        : "";
-    const mailboxLocal =
-      typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
-        ? normalizeLocalPart((body as any).mailboxLocal)
-        : "";
-    if (!domain) return json({ error: "domain_required" }, { status: 400 });
-    if (!mailboxLocal) return json({ error: "mailbox_required" }, { status: 400 });
-    if (!isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
-    if (!isValidLocalPart(mailboxLocal)) return json({ error: "invalid_mailbox_local" }, { status: 400 });
-    const mailboxAddress = makeEmailAddress(mailboxLocal, domain);
+      const body = await readJsonBody(request);
+      if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
-    const existing = await env.DB.prepare("SELECT id FROM users WHERE username = ?1 LIMIT 1")
-      .bind(username)
-      .first<{ id: string }>();
-    if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
+      const turnstile = await getTurnstileConfig(env);
+      if (turnstile.mode !== "off") {
+        const turnstileRes = await requireTurnstileToken(request, turnstile.secret, body, true);
+        if (turnstileRes) return turnstileRes;
+      }
 
-    const id = crypto.randomUUID();
-    const passwordHash = await hashPassword(password);
-    await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 1)")
-      .bind(id, username, passwordHash)
-      .run();
+      const username = toUsername(body);
+      const password = toPassword(body);
+      if (!isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
+      if (typeof password !== "string" || password.length < 8 || password.length > 72) {
+        return json({ error: "invalid_password" }, { status: 400 });
+      }
 
-    try {
+      const domain =
+        typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
+          ? normalizeDomain((body as any).domain)
+          : "";
+      const mailboxLocal =
+        typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
+          ? normalizeLocalPart((body as any).mailboxLocal)
+          : "";
+      if (!domain) return json({ error: "domain_required" }, { status: 400 });
+      if (!mailboxLocal) return json({ error: "mailbox_required" }, { status: 400 });
+      if (!isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
+      if (!isValidLocalPart(mailboxLocal)) return json({ error: "invalid_mailbox_local" }, { status: 400 });
+      const mailboxAddress = makeEmailAddress(mailboxLocal, domain);
+
+      const existing = await env.DB.prepare("SELECT id FROM users WHERE username = ?1 LIMIT 1")
+        .bind(username)
+        .first<{ id: string }>();
+      if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
+
+      const id = crypto.randomUUID();
+      const passwordHash = await hashPassword(password);
+      await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 1)")
+        .bind(id, username, passwordHash)
+        .run();
+
+      const now = Date.now();
       await env.DB.prepare(
         "INSERT INTO app_settings (key, value, updated_at) VALUES ('allow_register', '0', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
       )
-        .bind(Date.now())
+        .bind(now)
         .run();
-    } catch (err) {
-      if (!isMissingAppSettingsTableError(err)) throw err;
-    }
 
-    try {
-      await env.DB.prepare(
-        "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('max_aliases', '3')",
-      ).run();
-    } catch (err) {
-      if (!isMissingAppSettingsTableError(err)) throw err;
-    }
+      await env.DB.prepare("INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('max_aliases', '3', ?1)")
+        .bind(now)
+        .run();
 
-    try {
       await env.DB.prepare("INSERT OR IGNORE INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)")
         .bind(crypto.randomUUID(), domain)
         .run();
-    } catch (err) {
-      if (!isMissingDomainsTableError(err)) throw err;
+
+      const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
+        .bind(mailboxAddress)
+        .first<{ id: string }>();
+      if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
+      const mailboxId = crypto.randomUUID();
+      await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+        .bind(mailboxId, id, mailboxAddress)
+        .run();
+
+      const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+      const secret = getJwtSecretCurrent(env);
+      if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+      const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
+      return json({ user: { id, username, isAdmin: true }, token }, { status: 201 });
     }
-
-    const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
-      .bind(mailboxAddress)
-      .first<{ id: string }>();
-    if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
-    const mailboxId = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(mailboxId, id, mailboxAddress)
-      .run();
-
-    const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-    const secret = getJwtSecretCurrent(env);
-    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
-    const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
-    return json({ user: { id, username, isAdmin: true }, token }, { status: 201 });
-  }
 
   if (pathname === "/api/auth/register" && request.method === "POST") {
     if (!hasJwtSecret(env)) return json({ error: "server_misconfigured" }, { status: 500 });
@@ -700,24 +609,20 @@ export async function handleFetch(request: Request, env: Env) {
       return json({ error: "invalid_max_aliases" }, { status: 400 });
     }
 
-    try {
-      const now = Date.now();
-      if (typeof allowRegister === "boolean") {
-        await env.DB.prepare(
-          "INSERT INTO app_settings (key, value, updated_at) VALUES ('allow_register', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        )
-          .bind(allowRegister ? "1" : "0", now)
-          .run();
-      }
-      if (typeof maxAliases === "number") {
-        await env.DB.prepare(
-          "INSERT INTO app_settings (key, value, updated_at) VALUES ('max_aliases', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        )
-          .bind(String(maxAliases), now)
-          .run();
-      }
-    } catch (err) {
-      if (!isMissingAppSettingsTableError(err)) throw err;
+    const now = Date.now();
+    if (typeof allowRegister === "boolean") {
+      await env.DB.prepare(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('allow_register', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      )
+        .bind(allowRegister ? "1" : "0", now)
+        .run();
+    }
+    if (typeof maxAliases === "number") {
+      await env.DB.prepare(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('max_aliases', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      )
+        .bind(String(maxAliases), now)
+        .run();
     }
     const nextAllowRegister = (await getSetting(env, "allow_register")) === "1";
     const nextMaxAliases = await getMaxAliases(env);
@@ -774,25 +679,20 @@ export async function handleFetch(request: Request, env: Env) {
   if (pathname === "/api/admin/domains" && request.method === "GET") {
     const auth = await requireAuth(request, env);
     if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
-    try {
-      const res = await env.DB.prepare("SELECT id, domain, is_active, created_at FROM domains ORDER BY domain ASC").all<{
-        id: string;
-        domain: string;
-        is_active: number;
-        created_at: number;
-      }>();
-      return json({
-        domains: res.results.map((r) => ({
-          id: r.id,
-          domain: r.domain,
-          isActive: Boolean(r.is_active),
-          createdAt: r.created_at,
-        })),
-      });
-    } catch (err) {
-      if (isMissingDomainsTableError(err)) return json({ domains: [] });
-      throw err;
-    }
+    const res = await env.DB.prepare("SELECT id, domain, is_active, created_at FROM domains ORDER BY domain ASC").all<{
+      id: string;
+      domain: string;
+      is_active: number;
+      created_at: number;
+    }>();
+    return json({
+      domains: res.results.map((r) => ({
+        id: r.id,
+        domain: r.domain,
+        isActive: Boolean(r.is_active),
+        createdAt: r.created_at,
+      })),
+    });
   }
 
   if (pathname === "/api/admin/domains" && request.method === "POST") {
@@ -806,12 +706,7 @@ export async function handleFetch(request: Request, env: Env) {
         : "";
     if (!domain || !domain.includes(".")) return json({ error: "invalid_domain" }, { status: 400 });
     const id = crypto.randomUUID();
-    try {
-      await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
-    } catch (err) {
-      if (isMissingDomainsTableError(err)) return json({ error: "server_misconfigured" }, { status: 500 });
-      throw err;
-    }
+    await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
     return json({ domain: { id, domain, isActive: true } }, { status: 201 });
   }
 
@@ -821,11 +716,7 @@ export async function handleFetch(request: Request, env: Env) {
     if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
     const domain = decodeURIComponent(adminDomainDeleteMatch[1]).trim().toLowerCase();
     if (!domain) return json({ error: "invalid_domain" }, { status: 400 });
-    try {
-      await env.DB.prepare("DELETE FROM domains WHERE domain = ?1").bind(domain).run();
-    } catch (err) {
-      if (!isMissingDomainsTableError(err)) throw err;
-    }
+    await env.DB.prepare("DELETE FROM domains WHERE domain = ?1").bind(domain).run();
     return text("", { status: 204 });
   }
 
@@ -1020,35 +911,18 @@ export async function handleFetch(request: Request, env: Env) {
       ai_code?: string | null;
       ai_service?: string | null;
     }>;
-    try {
-      if (cur) {
-        res = await env.DB.prepare(
-          "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
-        )
-          .bind(mailbox.id, limit, cur.receivedAt, cur.id)
-          .all();
-      } else {
-        res = await env.DB.prepare(
-          "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
-        )
-          .bind(mailbox.id, limit)
-          .all();
-      }
-    } catch (err) {
-      if (!isMissingAiColumnsError(err)) throw err;
-      if (cur) {
-        res = await env.DB.prepare(
-          "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
-        )
-          .bind(mailbox.id, limit, cur.receivedAt, cur.id)
-          .all();
-      } else {
-        res = await env.DB.prepare(
-          "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
-        )
-          .bind(mailbox.id, limit)
-          .all();
-      }
+    if (cur) {
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit, cur.receivedAt, cur.id)
+        .all();
+    } else {
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit)
+        .all();
     }
 
     const last = res.results[res.results.length - 1];
@@ -1245,20 +1119,11 @@ export async function handleFetch(request: Request, env: Env) {
       ai_code?: string | null;
       ai_service?: string | null;
     }>;
-    try {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
-    } catch (err) {
-      if (!isMissingAiColumnsError(err)) throw err;
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
-    }
+    res = await env.DB.prepare(
+      "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
+    )
+      .bind(mailbox.id, limit)
+      .all();
 
     return json({
       messages: res.results.map((r) => ({
@@ -1393,35 +1258,18 @@ export async function handleFetch(request: Request, env: Env) {
       ai_code?: string | null;
       ai_service?: string | null;
     }>;
-    try {
-      if (cur) {
-        fts = await env.DB.prepare(
-          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 AND (m.received_at < ?4 OR (m.received_at = ?4 AND m.id < ?5)) ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
-        )
-          .bind(q, mailbox.id, limit, cur.receivedAt, cur.id)
-          .all();
-      } else {
-        fts = await env.DB.prepare(
-          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
-        )
-          .bind(q, mailbox.id, limit)
-          .all();
-      }
-    } catch (err) {
-      if (!isMissingAiColumnsError(err)) throw err;
-      if (cur) {
-        fts = await env.DB.prepare(
-          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 AND (m.received_at < ?4 OR (m.received_at = ?4 AND m.id < ?5)) ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
-        )
-          .bind(q, mailbox.id, limit, cur.receivedAt, cur.id)
-          .all();
-      } else {
-        fts = await env.DB.prepare(
-          "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
-        )
-          .bind(q, mailbox.id, limit)
-          .all();
-      }
+    if (cur) {
+      fts = await env.DB.prepare(
+        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 AND (m.received_at < ?4 OR (m.received_at = ?4 AND m.id < ?5)) ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+      )
+        .bind(q, mailbox.id, limit, cur.receivedAt, cur.id)
+        .all();
+    } else {
+      fts = await env.DB.prepare(
+        "SELECT m.id, m.subject, m.from_name, m.from_address, m.snippet, m.received_at, m.ai_code, m.ai_service FROM messages_fts f JOIN messages m ON m.id = f.message_id WHERE f.messages_fts MATCH ?1 AND m.mailbox_id = ?2 ORDER BY m.received_at DESC, m.id DESC LIMIT ?3",
+      )
+        .bind(q, mailbox.id, limit)
+        .all();
     }
 
     const last = fts.results[fts.results.length - 1];
@@ -1441,5 +1289,9 @@ export async function handleFetch(request: Request, env: Env) {
     });
   }
 
-  return json({ error: "not_found" }, { status: 404 });
+    return json({ error: "not_found" }, { status: 404 });
+  } catch (err) {
+    if (isDbSchemaError(err)) return json({ error: "server_misconfigured" }, { status: 500 });
+    throw err;
+  }
 }
