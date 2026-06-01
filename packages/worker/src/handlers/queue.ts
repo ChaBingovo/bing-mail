@@ -104,9 +104,10 @@ async function processOne(messageId: string, env: Env, requestId: string) {
     let htmlR2Key: string | null = null;
     if (html) {
       if (html.length >= limit) {
-        htmlR2Key = `html/${messageId}.html`;
+        htmlR2Key = `archive/html/${messageId}.html`;
         await env.MAIL_BUCKET.put(htmlR2Key, new TextEncoder().encode(html), {
           httpMetadata: { contentType: "text/html; charset=utf-8" },
+          customMetadata: { messageId },
         });
       } else {
         htmlInline = html;

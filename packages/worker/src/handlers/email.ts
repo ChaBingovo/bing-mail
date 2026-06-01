@@ -49,13 +49,16 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
 
   const messageId = crypto.randomUUID();
   const receivedAt = Date.now();
-  const rawKey = `raw/${messageId}.eml`;
+  const rawKey = `archive/raw/${messageId}.eml`;
   const requestId = crypto.randomUUID();
 
   ctx.waitUntil(
     (async () => {
       try {
-        await env.MAIL_BUCKET.put(rawKey, message.raw);
+        await env.MAIL_BUCKET.put(rawKey, message.raw, {
+          httpMetadata: { contentType: "message/rfc822" },
+          customMetadata: { mailboxId: target.id, receivedAt: String(receivedAt) },
+        });
         await env.DB.prepare(
           "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
         )
