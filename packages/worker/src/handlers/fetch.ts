@@ -902,7 +902,7 @@ export async function handleFetch(request: Request, env: Env) {
     const cur = decodeCursor(url.searchParams.get("cursor"));
     let res: D1Result<{
       id: string;
-      status: "PENDING" | "SUCCESS";
+      status: "PENDING" | "SUCCESS" | "FAILED";
       from_name: string | null;
       from_address: string | null;
       subject: string | null;
@@ -1108,9 +1108,10 @@ export async function handleFetch(request: Request, env: Env) {
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
+    const cur = decodeCursor(url.searchParams.get("cursor"));
     let res: D1Result<{
       id: string;
-      status: "PENDING" | "SUCCESS";
+      status: "PENDING" | "SUCCESS" | "FAILED";
       from_name: string | null;
       from_address: string | null;
       subject: string | null;
@@ -1119,12 +1120,22 @@ export async function handleFetch(request: Request, env: Env) {
       ai_code?: string | null;
       ai_service?: string | null;
     }>;
-    res = await env.DB.prepare(
-      "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC LIMIT ?2",
-    )
-      .bind(mailbox.id, limit)
-      .all();
+    if (cur) {
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit, cur.receivedAt, cur.id)
+        .all();
+    } else {
+      res = await env.DB.prepare(
+        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
+      )
+        .bind(mailbox.id, limit)
+        .all();
+    }
 
+    const last = res.results[res.results.length - 1];
+    const nextCursor = res.results.length >= limit && last ? encodeCursor(last.received_at, last.id) : null;
     return json({
       messages: res.results.map((r) => ({
         id: r.id,
@@ -1137,6 +1148,7 @@ export async function handleFetch(request: Request, env: Env) {
         aiCode: r.ai_code ?? null,
         aiService: r.ai_service ?? null,
       })),
+      nextCursor,
     });
   }
 
