@@ -1,0 +1,2 @@
+ALTER TABLE messages ADD COLUMN lock_id TEXT;
+ALTER TABLE messages ADD COLUMN locked_at INTEGER;

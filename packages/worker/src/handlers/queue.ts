@@ -41,7 +41,7 @@ export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: E
     batch.messages.map(async (msg) => {
       const requestId = crypto.randomUUID();
       try {
-        await processOne(msg.body.messageId, env);
+        await processOne(msg.body.messageId, env, requestId);
         msg.ack();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -52,26 +52,33 @@ export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: E
   );
 }
 
-async function processOne(messageId: string, env: Env) {
+async function processOne(messageId: string, env: Env, requestId: string) {
   const rawMaxAttempts = Number(env.PARSE_QUEUE_MAX_ATTEMPTS || "5");
   const maxAttempts =
     Number.isFinite(rawMaxAttempts) && rawMaxAttempts > 0 ? Math.floor(rawMaxAttempts) : 5;
 
-  const [claimRes, rowRes] = await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE messages SET attempt = attempt + 1, status='PENDING', error_reason=NULL WHERE id = ?1 AND status != 'SUCCESS' AND attempt < ?2",
-    ).bind(messageId, maxAttempts),
-    env.DB.prepare("SELECT r2_raw_key, mailbox_id, received_at, attempt FROM messages WHERE id = ?1 LIMIT 1").bind(
-      messageId,
-    ),
-  ]);
+  const rawLockTtlMs = Number(env.PARSE_QUEUE_LOCK_TTL_MS || "300000");
+  const lockTtlMs =
+    Number.isFinite(rawLockTtlMs) && rawLockTtlMs > 0 ? Math.floor(rawLockTtlMs) : 300000;
 
-  const changes = claimRes.meta?.changes ?? 0;
-  if (changes === 0) return;
+  const lockId = requestId;
+  const now = Date.now();
+  const cutoff = now - lockTtlMs;
 
-  const row = (rowRes.results?.[0] ?? null) as
-    | { r2_raw_key: string; mailbox_id: string; received_at: number; attempt: number }
-    | null;
+  const claimRes = await env.DB.prepare(
+    "UPDATE messages SET attempt = attempt + 1, status='PENDING', error_reason=NULL, lock_id=?3, locked_at=?4 WHERE id=?1 AND status != 'SUCCESS' AND attempt < ?2 AND (lock_id IS NULL OR locked_at < ?5)",
+  )
+    .bind(messageId, maxAttempts, lockId, now, cutoff)
+    .run();
+
+  const claimed = claimRes.meta?.changes ?? 0;
+  if (claimed === 0) return;
+
+  const row = await env.DB.prepare(
+    "SELECT r2_raw_key, mailbox_id, received_at, attempt FROM messages WHERE id = ?1 AND lock_id = ?2 LIMIT 1",
+  )
+    .bind(messageId, lockId)
+    .first<{ r2_raw_key: string; mailbox_id: string; received_at: number; attempt: number }>();
 
   if (!row?.r2_raw_key) return;
 
@@ -153,8 +160,8 @@ async function processOne(messageId: string, env: Env) {
       }
     }
 
-    await env.DB.prepare(
-      "UPDATE messages SET status='SUCCESS', error_reason=NULL, from_address=?2, from_name=?3, subject=?4, snippet=?5, text_plain=?6, html_inline=?7, html_r2_key=?8, parsed_at=?9, ai_code=?10, ai_service=?11 WHERE id=?1",
+    const updateRes = await env.DB.prepare(
+      "UPDATE messages SET status='SUCCESS', error_reason=NULL, from_address=?2, from_name=?3, subject=?4, snippet=?5, text_plain=?6, html_inline=?7, html_r2_key=?8, parsed_at=?9, ai_code=?10, ai_service=?11, lock_id=NULL, locked_at=NULL WHERE id=?1 AND lock_id=?12",
     )
       .bind(
         messageId,
@@ -168,8 +175,12 @@ async function processOne(messageId: string, env: Env) {
         parsedAt,
         aiCode,
         aiService,
+        lockId,
       )
       .run();
+
+    const updated = updateRes.meta?.changes ?? 0;
+    if (updated === 0) return;
 
     await env.DB.prepare("DELETE FROM messages_fts WHERE message_id = ?1").bind(messageId).run();
     await env.DB.prepare("INSERT INTO messages_fts (message_id, subject, body_text) VALUES (?1, ?2, ?3)")
@@ -178,10 +189,15 @@ async function processOne(messageId: string, env: Env) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const reason = msg.length > 800 ? msg.slice(0, 800) : msg;
-    await env.DB.prepare("UPDATE messages SET status='FAILED', error_reason=?2, parsed_at=NULL WHERE id=?1")
-      .bind(messageId, reason)
+    const failRes = await env.DB.prepare(
+      "UPDATE messages SET status='FAILED', error_reason=?2, parsed_at=NULL, lock_id=NULL, locked_at=NULL WHERE id=?1 AND lock_id=?3",
+    )
+      .bind(messageId, reason, lockId)
       .run();
+    const failed = failRes.meta?.changes ?? 0;
+    if (failed === 0) return;
     if (attempt < maxAttempts) throw (err instanceof Error ? err : new Error(String(err)));
+    console.error(JSON.stringify({ level: "error", event: "queue_message_failed_final", requestId, messageId, attempt, error: reason }));
     return;
   }
 

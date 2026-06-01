@@ -90,7 +90,9 @@ export const messages = sqliteTable(
     mailboxId: text("mailbox_id")
       .notNull()
       .references(() => mailboxes.id, { onDelete: "cascade", onUpdate: "cascade" }),
-    status: text("status", { enum: ["PENDING", "SUCCESS"] }).notNull(),
+    status: text("status", { enum: ["PENDING", "SUCCESS", "FAILED"] }).notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    errorReason: text("error_reason"),
     fromAddress: text("from_address"),
     fromName: text("from_name"),
     subject: text("subject"),
@@ -105,6 +107,11 @@ export const messages = sqliteTable(
     htmlInline: text("html_inline"),
     htmlR2Key: text("html_r2_key"),
     parsedAt: integer("parsed_at", { mode: "timestamp_ms" }),
+    lockId: text("lock_id"),
+    lockedAt: integer("locked_at", { mode: "timestamp_ms" }),
   },
-  (t) => [index("messages_mailbox_id_received_at_idx").on(t.mailboxId, t.receivedAt)],
+  (t) => [
+    index("messages_mailbox_id_received_at_idx").on(t.mailboxId, t.receivedAt),
+    index("messages_mailbox_id_received_at_id_idx").on(t.mailboxId, t.receivedAt, t.id),
+  ],
 );
