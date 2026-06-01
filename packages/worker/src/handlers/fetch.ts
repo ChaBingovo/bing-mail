@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
-import { getBearerToken, hashPassword, signJwt, verifyJwt, verifyPassword } from "../auth";
+import { getBearerToken, hashPassword, signJwt, verifyJwt, verifyPassword, type JwtPayload } from "../auth";
 
 function isDbSchemaError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -58,7 +58,12 @@ async function verifyJwtRotating(token: string, env: Env) {
   if (payload) return payload;
   const prev = getJwtSecretPrevious(env);
   if (!prev) return null;
-  return verifyJwt(token, prev);
+  const prevPayload = await verifyJwt(token, prev);
+  if (!prevPayload) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const maxExp = now + 14 * 24 * 60 * 60;
+  if (prevPayload.exp > maxExp) return null;
+  return prevPayload;
 }
 
 function parseTurnstileMode(raw: string) {
@@ -318,6 +323,25 @@ async function requireAuthWs(request: Request, env: Env) {
   return payload;
 }
 
+async function requireAuthOr401(request: Request, env: Env): Promise<JwtPayload | Response> {
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+  return auth;
+}
+
+async function requireAdminOr403(request: Request, env: Env): Promise<JwtPayload | Response> {
+  const auth = await requireAuth(request, env);
+  if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+  if (!auth.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+  return auth;
+}
+
+async function requireAuthWsOr401(request: Request, env: Env): Promise<JwtPayload | Response> {
+  const auth = await requireAuthWs(request, env);
+  if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+  return auth;
+}
+
 export async function handleFetch(request: Request, env: Env) {
   if (request.method === "OPTIONS") return text("", { status: 204 });
 
@@ -556,8 +580,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/password" && request.method === "PUT") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const oldPassword =
@@ -584,16 +609,16 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/settings" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const allowRegister = (await getSetting(env, "allow_register")) === "1";
     const maxAliases = await getMaxAliases(env);
     return json({ allowRegister, maxAliases });
   }
 
   if (pathname === "/api/admin/settings" && request.method === "PUT") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const allowRegister =
@@ -630,15 +655,15 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/turnstile" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const cfg = await getTurnstileConfig(env);
     return json({ mode: cfg.mode, siteKey: cfg.siteKey, hasSecret: cfg.hasSecret });
   }
 
   if (pathname === "/api/admin/turnstile" && request.method === "PUT") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
@@ -677,8 +702,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/domains" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const res = await env.DB.prepare("SELECT id, domain, is_active, created_at FROM domains ORDER BY domain ASC").all<{
       id: string;
       domain: string;
@@ -696,8 +721,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/domains" && request.method === "POST") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain =
@@ -712,8 +737,8 @@ export async function handleFetch(request: Request, env: Env) {
 
   const adminDomainDeleteMatch = pathname.match(/^\/api\/admin\/domains\/([^/]+)$/);
   if (adminDomainDeleteMatch && request.method === "DELETE") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const domain = decodeURIComponent(adminDomainDeleteMatch[1]).trim().toLowerCase();
     if (!domain) return json({ error: "invalid_domain" }, { status: 400 });
     await env.DB.prepare("DELETE FROM domains WHERE domain = ?1").bind(domain).run();
@@ -721,8 +746,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/users" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const res = await env.DB.prepare("SELECT id, username, is_admin, created_at FROM users ORDER BY created_at DESC").all<{
       id: string;
       username: string;
@@ -740,8 +765,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/users" && request.method === "POST") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const username = toUsername(body);
@@ -794,8 +819,8 @@ export async function handleFetch(request: Request, env: Env) {
 
   const adminUserPasswordMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/password$/);
   if (adminUserPasswordMatch && request.method === "PUT") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const userId = decodeURIComponent(adminUserPasswordMatch[1]).trim();
     if (!userId) return json({ error: "invalid_user_id" }, { status: 400 });
     const body = await readJsonBody(request);
@@ -810,8 +835,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/mailboxes" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const res = await env.DB.prepare(
       "SELECT m.address, m.user_id, m.is_active, u.username FROM mailboxes m LEFT JOIN users u ON u.id = m.user_id ORDER BY m.created_at DESC",
     ).all<{ address: string; user_id: string | null; is_active: number; username: string | null }>();
@@ -826,8 +851,8 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/admin/mailboxes" && request.method === "POST") {
-    const auth = await requireAuth(request, env);
-    if (!auth?.isAdmin) return json({ error: "forbidden" }, { status: 403 });
+    const authRes = await requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain =
@@ -880,8 +905,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/mailbox" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const row = await env.DB.prepare("SELECT address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
@@ -890,8 +916,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/messages" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
@@ -945,8 +972,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/red-dot" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
@@ -984,8 +1012,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/ws" && request.method === "GET") {
-    const auth = await requireAuthWs(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthWsOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const mailbox = await env.DB.prepare("SELECT address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
@@ -999,8 +1028,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/aliases" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
@@ -1017,8 +1047,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/user/aliases" && request.method === "POST") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
 
     const body = await readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
@@ -1071,8 +1102,9 @@ export async function handleFetch(request: Request, env: Env) {
 
   const aliasDeleteMatch = pathname.match(/^\/api\/user\/aliases\/([^/]+)$/);
   if (aliasDeleteMatch && request.method === "DELETE") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const address = decodeURIComponent(aliasDeleteMatch[1]).trim().toLowerCase();
     if (!address || !address.includes("@")) return json({ error: "invalid_address" }, { status: 400 });
     const mailbox = await env.DB.prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
@@ -1087,8 +1119,9 @@ export async function handleFetch(request: Request, env: Env) {
 
   const wsMailboxMatch = pathname.match(/^\/api\/ws\/mailboxes\/([^/]+)$/);
   if (wsMailboxMatch && request.method === "GET") {
-    const auth = await requireAuthWs(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthWsOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const address = decodeURIComponent(wsMailboxMatch[1]).trim().toLowerCase();
     const mailbox = await requireMailboxAccess(env, auth, address);
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
@@ -1101,8 +1134,9 @@ export async function handleFetch(request: Request, env: Env) {
 
   const mailboxMatch = pathname.match(/^\/api\/mailboxes\/([^/]+)\/messages$/);
   if (mailboxMatch && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const address = decodeURIComponent(mailboxMatch[1]).trim().toLowerCase();
     const mailbox = await requireMailboxAccess(env, auth, address);
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
@@ -1154,8 +1188,9 @@ export async function handleFetch(request: Request, env: Env) {
 
   const redDotMatch = pathname.match(/^\/api\/mailboxes\/([^/]+)\/red-dot$/);
   if (redDotMatch && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const address = decodeURIComponent(redDotMatch[1]).trim().toLowerCase();
     const mailbox = await requireMailboxAccess(env, auth, address);
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
@@ -1191,8 +1226,9 @@ export async function handleFetch(request: Request, env: Env) {
 
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
   if (msgMetaMatch && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const id = decodeURIComponent(msgMetaMatch[1]);
     const row = await requireMessageAccess(env, auth, id);
     if (!row) return json({ error: "message_not_found" }, { status: 404 });
@@ -1249,8 +1285,9 @@ export async function handleFetch(request: Request, env: Env) {
   }
 
   if (pathname === "/api/search" && request.method === "GET") {
-    const auth = await requireAuth(request, env);
-    if (!auth) return json({ error: "unauthorized" }, { status: 401 });
+    const authRes = await requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
     const address = (url.searchParams.get("address") || "").trim().toLowerCase();
     const q = (url.searchParams.get("q") || "").trim();
     if (!address || !q) return json({ error: "missing_params" }, { status: 400 });
