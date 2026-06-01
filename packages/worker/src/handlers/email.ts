@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logError } from "../log";
 
 function normalizeAddress(value: unknown) {
   if (!value) return "";
@@ -63,9 +64,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
         await env.PARSE_QUEUE.send({ messageId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(
-          JSON.stringify({ level: "error", event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg }),
-        );
+        logError({ event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg });
         throw err;
       }
     })(),

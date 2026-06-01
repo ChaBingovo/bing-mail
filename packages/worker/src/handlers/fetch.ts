@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
 import { getBearerToken, hashPassword, signJwt, verifyJwt, verifyPassword, type JwtPayload } from "../auth";
+import { logError } from "../log";
 
 function isDbSchemaError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -1340,7 +1341,12 @@ export async function handleFetch(request: Request, env: Env) {
 
     return json({ error: "not_found" }, { status: 404 });
   } catch (err) {
-    if (isDbSchemaError(err)) return json({ error: "server_misconfigured" }, { status: 500 });
+    if (isDbSchemaError(err)) {
+      const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
+      const message = err instanceof Error ? err.message : String(err);
+      logError({ event: "db_schema_error", requestId, error: message });
+      return json({ error: "server_misconfigured", requestId }, { status: 500 });
+    }
     throw err;
   }
 }

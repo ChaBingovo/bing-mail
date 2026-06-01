@@ -1,6 +1,7 @@
 import * as PostalMime from "postal-mime";
 import type { MessageBatch } from "@cloudflare/workers-types";
 import type { Env, ParseQueueMessage } from "../env";
+import { logError } from "../log";
 
 function toSnippet(value: string | null | undefined, limit = 140) {
   if (!value) return null;
@@ -45,7 +46,7 @@ export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: E
         msg.ack();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(JSON.stringify({ level: "error", event: "queue_process_failed", requestId, messageId: msg.body.messageId, error: message }));
+        logError({ event: "queue_process_failed", requestId, messageId: msg.body.messageId, error: message });
         msg.retry();
       }
     }),
@@ -197,7 +198,7 @@ async function processOne(messageId: string, env: Env, requestId: string) {
     const failed = failRes.meta?.changes ?? 0;
     if (failed === 0) return;
     if (attempt < maxAttempts) throw (err instanceof Error ? err : new Error(String(err)));
-    console.error(JSON.stringify({ level: "error", event: "queue_message_failed_final", requestId, messageId, attempt, error: reason }));
+    logError({ event: "queue_message_failed_final", requestId, messageId, attempt, error: reason });
     return;
   }
 
