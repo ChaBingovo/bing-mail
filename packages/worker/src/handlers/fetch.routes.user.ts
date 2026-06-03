@@ -10,14 +10,8 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     const auth = authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const oldPassword =
-      typeof body === "object" && body && "oldPassword" in body && typeof (body as any).oldPassword === "string"
-        ? (body as any).oldPassword
-        : "";
-    const newPassword =
-      typeof body === "object" && body && "newPassword" in body && typeof (body as any).newPassword === "string"
-        ? (body as any).newPassword
-        : "";
+    const oldPassword = S.getStringField(body, "oldPassword") || "";
+    const newPassword = S.getStringField(body, "newPassword") || "";
     if (!oldPassword) return json({ error: "invalid_old_password" }, { status: 400 });
     if (newPassword.length < 8 || newPassword.length > 72) return json({ error: "invalid_new_password" }, { status: 400 });
 
@@ -182,14 +176,8 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
 
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
-    const local =
-      typeof body === "object" && body && "local" in body && typeof (body as any).local === "string"
-        ? S.normalizeLocalPart((body as any).local)
-        : "";
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
+    const local = S.normalizeLocalPart(S.getStringField(body, "local") || "");
     if (!domain) return json({ error: "domain_required" }, { status: 400 });
     if (!local) return json({ error: "mailbox_required" }, { status: 400 });
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });

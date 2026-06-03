@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { logError } from "../log";
+import { logError, logInfo, logWarn } from "../log";
 
 function normalizeAddress(value: unknown) {
   if (!value) return "";
@@ -12,6 +12,7 @@ function normalizeAddress(value: unknown) {
 }
 
 export async function handleEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+  const requestId = crypto.randomUUID();
   const to = normalizeAddress(message.to);
   const from = normalizeAddress(message.from);
 
@@ -32,6 +33,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const target = mailboxRes?.id ? mailboxRes : aliasRes;
 
   if (!target?.id || !target.user_id) {
+    logWarn({ event: "email_ingest_reject_unknown_recipient", requestId });
     message.setReject("Unknown recipient");
     return;
   }
@@ -43,6 +45,12 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
     .first<{ ok: 1 }>();
 
   if (blockRes?.ok) {
+    logWarn({
+      event: "email_ingest_reject_blocked_sender",
+      requestId,
+      mailboxId: target.id,
+      userId: target.user_id || undefined,
+    });
     message.setReject("Blocked sender");
     return;
   }
@@ -50,7 +58,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const messageId = crypto.randomUUID();
   const receivedAt = Date.now();
   const rawKey = `archive/raw/${messageId}.eml`;
-  const requestId = crypto.randomUUID();
+  logInfo({ event: "email_ingest_accept", requestId, messageId, mailboxId: target.id, userId: target.user_id || undefined });
 
   ctx.waitUntil(
     (async () => {
@@ -65,6 +73,13 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
           .bind(messageId, target.id, receivedAt, rawKey)
           .run();
         await env.PARSE_QUEUE.send({ messageId });
+        logInfo({
+          event: "email_ingest_enqueued",
+          requestId,
+          messageId,
+          mailboxId: target.id,
+          userId: target.user_id || undefined,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logError({ event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg });

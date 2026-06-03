@@ -15,19 +15,55 @@ export async function readJsonBody(request: Request) {
   }
 }
 
+export function asRecord(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+export function getStringField(body: unknown, key: string) {
+  const r = asRecord(body);
+  if (!r) return null;
+  const v = r[key];
+  if (typeof v !== "string") return null;
+  return v;
+}
+
+export function getTrimmedStringField(body: unknown, key: string) {
+  const v = getStringField(body, key);
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t : null;
+}
+
+export function getLowerStringField(body: unknown, key: string) {
+  const v = getTrimmedStringField(body, key);
+  return v ? v.toLowerCase() : null;
+}
+
+export function getBooleanField(body: unknown, key: string) {
+  const r = asRecord(body);
+  if (!r) return null;
+  const v = r[key];
+  if (typeof v !== "boolean") return null;
+  return v;
+}
+
+export function getNumberField(body: unknown, key: string) {
+  const r = asRecord(body);
+  if (!r) return null;
+  const v = r[key];
+  if (typeof v !== "number") return null;
+  return v;
+}
+
 export function toUsername(body: unknown) {
-  const username =
-    typeof body === "object" && body && "username" in body && typeof (body as any).username === "string"
-      ? (body as any).username.trim()
-      : "";
+  const username = getTrimmedStringField(body, "username") || "";
   return username;
 }
 
 export function toPassword(body: unknown) {
-  const password =
-    typeof body === "object" && body && "password" in body && typeof (body as any).password === "string"
-      ? (body as any).password
-      : "";
+  const password = getStringField(body, "password") || "";
   return password;
 }
 
@@ -140,11 +176,7 @@ export async function getTurnstileConfig(env: Env) {
 }
 
 export function getTurnstileToken(body: unknown) {
-  const v =
-    typeof body === "object" && body && "turnstileToken" in body && typeof (body as any).turnstileToken === "string"
-      ? (body as any).turnstileToken.trim()
-      : "";
-  return v || null;
+  return getTrimmedStringField(body, "turnstileToken");
 }
 
 export function getClientIp(request: Request) {

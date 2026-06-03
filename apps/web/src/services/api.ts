@@ -35,6 +35,12 @@ export function createApiClient(getToken: () => string | null, onUnauthorized: (
         const data = (await res.clone().json()) as { error?: unknown };
         if (typeof data?.error === "string") msg = data.error;
       } catch {}
+      if (msg === String(res.status)) {
+        try {
+          const t = (await res.clone().text()).trim();
+          if (t) msg = t;
+        } catch {}
+      }
       throw new Error(msg);
     }
     return res.text();

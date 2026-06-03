@@ -24,10 +24,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     if (await S.isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
     await env.DB.prepare("INSERT OR IGNORE INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)")
       .bind(crypto.randomUUID(), domain)
@@ -56,14 +53,8 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       return json({ error: "invalid_password" }, { status: 400 });
     }
 
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
-    const mailboxLocal =
-      typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
-        ? S.normalizeLocalPart((body as any).mailboxLocal)
-        : "";
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
+    const mailboxLocal = S.normalizeLocalPart(S.getStringField(body, "mailboxLocal") || "");
     if (!domain) return json({ error: "domain_required" }, { status: 400 });
     if (!mailboxLocal) return json({ error: "mailbox_required" }, { status: 400 });
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
@@ -138,14 +129,8 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       return json({ error: "invalid_password" }, { status: 400 });
     }
 
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
-    const mailboxLocal =
-      typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
-        ? S.normalizeLocalPart((body as any).mailboxLocal)
-        : "";
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
+    const mailboxLocal = S.normalizeLocalPart(S.getStringField(body, "mailboxLocal") || "");
     if (!domain) return json({ error: "domain_required" }, { status: 400 });
     if (!mailboxLocal) return json({ error: "mailbox_required" }, { status: 400 });
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });

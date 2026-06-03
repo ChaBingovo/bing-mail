@@ -79,6 +79,8 @@ npx --prefix packages/worker wrangler deploy --cwd .
 
 ## 本地开发
 
+更多本地开发细节（UTF-8、seed/reset、`.dev.vars` 示例）见：[dev.md](file:///c:/Users/ChaBi/Desktop/Bingmail/docs/dev.md)
+
 1. 安装依赖
 
 ```bash
@@ -98,6 +100,10 @@ bun run dev:worker
 ```bash
 bun run dev:web
 ```
+
+## 部署 Checklist
+
+见：[deploy-checklist.md](file:///c:/Users/ChaBi/Desktop/Bingmail/docs/deploy-checklist.md)
 
 ## 配置归类
 

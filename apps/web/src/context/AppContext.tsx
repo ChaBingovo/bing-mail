@@ -78,9 +78,13 @@ export function AppProvider(props: { children: any }) {
     if (!u?.id) return;
     if (sessionCheckedForUserId === u.id) return;
     sessionCheckedForUserId = u.id;
-    void fetch("/api/user/mailbox", { method: "GET", credentials: "include" }).then((res) => {
-      if (res.status === 401) toGuest();
-    });
+    void fetch("/api/user/mailbox", { method: "GET", credentials: "include" })
+      .then((res) => {
+        if (res.status === 401) toGuest();
+      })
+      .catch((err) => {
+        console.warn("Session check failed:", err);
+      });
   });
 
   const setActiveAddress = (v: string) => {

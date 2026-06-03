@@ -1,7 +1,7 @@
 import * as PostalMime from "postal-mime";
 import type { MessageBatch } from "@cloudflare/workers-types";
 import type { Env, ParseQueueMessage } from "../env";
-import { logError } from "../log";
+import { logError, logInfo, logWarn } from "../log";
 
 function toSnippet(value: string | null | undefined, limit = 140) {
   if (!value) return null;
@@ -84,12 +84,15 @@ async function processOne(messageId: string, env: Env, requestId: string) {
   if (!row?.r2_raw_key) return;
 
   const attempt = Number(row.attempt) || 0;
+  logInfo({ event: "queue_message_claimed", requestId, messageId, mailboxId: row.mailbox_id, attempt, status: "PENDING" });
   try {
     const rawObj = await env.MAIL_BUCKET.get(row.r2_raw_key);
     if (!rawObj?.body) throw new Error("raw email not found");
+    logInfo({ event: "queue_r2_raw_read", requestId, messageId, mailboxId: row.mailbox_id, attempt });
 
     const parser = new PostalMime.default();
     const parsed = await parser.parse(await new Response(rawObj.body).arrayBuffer());
+    logInfo({ event: "queue_mime_parsed", requestId, messageId, mailboxId: row.mailbox_id, attempt });
 
     const fromAddress =
       typeof parsed.from?.address === "string" ? parsed.from.address.trim().toLowerCase() : null;
@@ -121,6 +124,7 @@ async function processOne(messageId: string, env: Env, requestId: string) {
     let aiService: string | null = null;
     const canUseAi = typeof (env as any).AI?.run === "function";
     if (canUseAi && shouldRunAi(subject, textPlain)) {
+      logInfo({ event: "queue_ai_start", requestId, messageId, mailboxId: row.mailbox_id, attempt });
       try {
         const systemPrompt =
           'You are an email parser. Extract the verification code (OTP) and the service/platform name from the email. Respond with ONLY a valid JSON object, no markdown, no code fences, no extra text. If absent/uncertain, use null. Schema: {"verification_code": string|null, "service_name": string|null}.';
@@ -159,6 +163,9 @@ async function processOne(messageId: string, env: Env, requestId: string) {
       } catch {
         aiCode = null;
         aiService = null;
+        logWarn({ event: "queue_ai_failed", requestId, messageId, mailboxId: row.mailbox_id, attempt });
+      } finally {
+        logInfo({ event: "queue_ai_done", requestId, messageId, mailboxId: row.mailbox_id, attempt });
       }
     }
 
@@ -183,11 +190,13 @@ async function processOne(messageId: string, env: Env, requestId: string) {
 
     const updated = updateRes.meta?.changes ?? 0;
     if (updated === 0) return;
+    logInfo({ event: "queue_message_saved", requestId, messageId, mailboxId: row.mailbox_id, attempt, status: "SUCCESS" });
 
     await env.DB.prepare("DELETE FROM messages_fts WHERE message_id = ?1").bind(messageId).run();
     await env.DB.prepare("INSERT INTO messages_fts (message_id, subject, body_text) VALUES (?1, ?2, ?3)")
       .bind(messageId, subject ?? "", textPlain ?? "")
       .run();
+    logInfo({ event: "queue_fts_updated", requestId, messageId, mailboxId: row.mailbox_id, attempt });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const reason = msg.length > 800 ? msg.slice(0, 800) : msg;
@@ -215,6 +224,9 @@ async function processOne(messageId: string, env: Env, requestId: string) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messageId, receivedAt: row.received_at }),
       });
-    } catch {}
+      logInfo({ event: "queue_notify_sent", requestId, messageId, mailboxId: row.mailbox_id, attempt });
+    } catch {
+      logWarn({ event: "queue_notify_failed", requestId, messageId, mailboxId: row.mailbox_id, attempt });
+    }
   }
 }

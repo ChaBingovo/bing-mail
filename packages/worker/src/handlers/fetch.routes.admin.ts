@@ -17,14 +17,9 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const allowRegister =
-      typeof body === "object" && body && "allowRegister" in body && typeof (body as any).allowRegister === "boolean"
-        ? (body as any).allowRegister
-        : null;
-    const maxAliases =
-      typeof body === "object" && body && "maxAliases" in body && typeof (body as any).maxAliases === "number"
-        ? Math.floor((body as any).maxAliases)
-        : null;
+    const allowRegister = S.getBooleanField(body, "allowRegister");
+    const maxAliasesRaw = S.getNumberField(body, "maxAliases");
+    const maxAliases = typeof maxAliasesRaw === "number" ? Math.floor(maxAliasesRaw) : null;
     if (allowRegister === null && maxAliases === null) return json({ error: "invalid_payload" }, { status: 400 });
     if (maxAliases !== null && (!Number.isFinite(maxAliases) || maxAliases < 0 || maxAliases > 50)) {
       return json({ error: "invalid_max_aliases" }, { status: 400 });
@@ -65,19 +60,10 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
 
     const current = await S.getTurnstileConfig(env);
 
-    const modeRaw =
-      typeof body === "object" && body && "mode" in body && typeof (body as any).mode === "string"
-        ? (body as any).mode
-        : null;
+    const modeRaw = S.getStringField(body, "mode");
     const mode = typeof modeRaw === "string" ? S.parseTurnstileMode(modeRaw) : null;
-    const siteKey =
-      typeof body === "object" && body && "siteKey" in body && typeof (body as any).siteKey === "string"
-        ? (body as any).siteKey.trim()
-        : null;
-    const secret =
-      typeof body === "object" && body && "secret" in body && typeof (body as any).secret === "string"
-        ? (body as any).secret.trim()
-        : null;
+    const siteKey = S.getTrimmedStringField(body, "siteKey");
+    const secret = S.getTrimmedStringField(body, "secret");
     if (modeRaw !== null && mode === null) return json({ error: "invalid_payload" }, { status: 400 });
     if (mode === null && siteKey === null && secret === null) return json({ error: "invalid_payload" }, { status: 400 });
 
@@ -121,10 +107,7 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? (body as any).domain.trim().toLowerCase()
-        : "";
+    const domain = S.getLowerStringField(body, "domain") || "";
     if (!domain || !domain.includes(".")) return json({ error: "invalid_domain" }, { status: 400 });
     const id = crypto.randomUUID();
     await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
@@ -167,18 +150,9 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const username = S.toUsername(body);
     const password = S.toPassword(body);
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
-    const mailboxLocal =
-      typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
-        ? S.normalizeLocalPart((body as any).mailboxLocal)
-        : "";
-    const isAdmin =
-      typeof body === "object" && body && "isAdmin" in body && typeof (body as any).isAdmin === "boolean"
-        ? (body as any).isAdmin
-        : false;
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
+    const mailboxLocal = S.normalizeLocalPart(S.getStringField(body, "mailboxLocal") || "");
+    const isAdmin = S.getBooleanField(body, "isAdmin") || false;
     if (!S.isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
     if (typeof password !== "string" || password.length < 8 || password.length > 72) {
       return json({ error: "invalid_password" }, { status: 400 });
@@ -251,18 +225,9 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain =
-      typeof body === "object" && body && "domain" in body && typeof (body as any).domain === "string"
-        ? S.normalizeDomain((body as any).domain)
-        : "";
-    const local =
-      typeof body === "object" && body && "mailboxLocal" in body && typeof (body as any).mailboxLocal === "string"
-        ? S.normalizeLocalPart((body as any).mailboxLocal)
-        : "";
-    const userId =
-      typeof body === "object" && body && "userId" in body && typeof (body as any).userId === "string"
-        ? (body as any).userId.trim()
-        : "";
+    const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
+    const local = S.normalizeLocalPart(S.getStringField(body, "mailboxLocal") || "");
+    const userId = S.getTrimmedStringField(body, "userId") || "";
     if (!domain) return json({ error: "domain_required" }, { status: 400 });
     if (!local) return json({ error: "mailbox_required" }, { status: 400 });
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
