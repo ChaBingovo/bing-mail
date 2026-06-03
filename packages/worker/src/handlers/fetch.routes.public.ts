@@ -109,7 +109,12 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const secret = S.getJwtSecretCurrent(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
-    return json({ user: { id, username, isAdmin: true }, token }, { status: 201 });
+    const secure = url.protocol === "https:";
+    const maxAgeSec = exp - Math.floor(Date.now() / 1000);
+    return json(
+      { user: { id, username, isAdmin: true }, token },
+      { status: 201, headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
+    );
   }
 
   if (pathname === "/api/auth/register" && request.method === "POST") {
@@ -173,7 +178,12 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const secret = S.getJwtSecretCurrent(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: id, username, isAdmin: false, exp }, secret);
-    return json({ user: { id, username, isAdmin: false }, token }, { status: 201 });
+    const secure = url.protocol === "https:";
+    const maxAgeSec = exp - Math.floor(Date.now() / 1000);
+    return json(
+      { user: { id, username, isAdmin: false }, token },
+      { status: 201, headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
+    );
   }
 
   if (pathname === "/api/auth/login" && request.method === "POST") {
@@ -227,7 +237,17 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: user.id, username, isAdmin, exp }, secret);
     await Promise.all(keys.map((k) => S.authRateReset(env, k)));
-    return json({ user: { id: user.id, username, isAdmin }, token });
+    const secure = url.protocol === "https:";
+    const maxAgeSec = exp - Math.floor(Date.now() / 1000);
+    return json(
+      { user: { id: user.id, username, isAdmin }, token },
+      { headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
+    );
+  }
+
+  if (pathname === "/api/auth/logout" && request.method === "POST") {
+    const secure = url.protocol === "https:";
+    return json({ ok: true }, { headers: { "set-cookie": S.clearSessionCookie(secure) } });
   }
 
   return null;

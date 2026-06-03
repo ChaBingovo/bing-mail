@@ -7,9 +7,9 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
   const [displayAddress, setDisplayAddress] = createSignal("");
 
   const [mailboxAddress] = createResource(
-    () => app.token(),
-    async (t) => {
-      if (!t) return null;
+    () => (app.mode() === "user" ? app.currentUser()?.id || "user" : ""),
+    async (k) => {
+      if (!k) return null;
       const data = await app.api.apiJson<{ address: string | null }>("/api/user/mailbox");
       return data.address;
     },
@@ -23,9 +23,9 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
   });
 
   const [aliases] = createResource(
-    () => app.token(),
-    async (t) => {
-      if (!t) return { mailbox: "", aliases: [] as string[] };
+    () => (app.mode() === "user" ? app.currentUser()?.id || "user" : ""),
+    async (k) => {
+      if (!k) return { mailbox: "", aliases: [] as string[] };
       const data = await app.api.apiJson<{ aliases: string[]; mailbox: string }>("/api/user/aliases");
       return { mailbox: data.mailbox || "", aliases: Array.isArray(data.aliases) ? data.aliases : [] };
     },
@@ -90,4 +90,3 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     currentUnseen,
   };
 }
-

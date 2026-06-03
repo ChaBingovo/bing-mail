@@ -9,9 +9,7 @@ export function createApiClient(getToken: () => string | null, onUnauthorized: (
     const token = getToken();
     if (token) headers.set("authorization", `Bearer ${token}`);
     const res = await fetch(path, { ...init, headers });
-    if (res.status === 401 && token) {
-      onUnauthorized();
-    }
+    if (res.status === 401) onUnauthorized();
     return res;
   }
 

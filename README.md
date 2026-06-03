@@ -38,10 +38,11 @@ database_id = "REPLACE_ME"
 
 ### 配置 Secret
 
-本项目需要 `JWT_SECRET` 用于登录态签名（不要提交到仓库）：
+本项目需要 `JWT_SECRET_CURRENT` 用于登录态签名（不要提交到仓库）。可选配置 `JWT_SECRET_PREVIOUS` 用于平滑轮换：
 
 ```bash
-bunx wrangler secret put JWT_SECRET
+bunx wrangler secret put JWT_SECRET_CURRENT
+bunx wrangler secret put JWT_SECRET_PREVIOUS
 ```
 
 ### Wrangler 部署（推荐）
@@ -58,7 +59,8 @@ bun run deploy:worker
 
 - `CLOUDFLARE_API_TOKEN`：具有 Workers 部署权限的 API Token
 - `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID
-- `JWT_SECRET`：登录态签名密钥（会由工作流同步到 Cloudflare Worker Secret）
+- `JWT_SECRET_CURRENT`：登录态签名密钥（会由工作流同步到 Cloudflare Worker Secret）
+- `JWT_SECRET_PREVIOUS`：可选，用于平滑轮换旧密钥
 
 第一次需要在 Actions 页面手动运行一次该工作流（用于“解锁”自动部署）；之后每次推送到 `main` 分支会自动部署。
 
@@ -96,6 +98,32 @@ bun run dev:worker
 ```bash
 bun run dev:web
 ```
+
+## 配置归类
+
+### Cloudflare Secrets（敏感）
+
+- `JWT_SECRET_CURRENT`：JWT 签名密钥（必须）
+- `JWT_SECRET_PREVIOUS`：旧 JWT 密钥（可选，用于轮换过渡）
+- `TURNSTILE_SECRET`：Turnstile 服务端密钥（启用 Turnstile 时需要）
+
+### `.dev.vars`（本地开发专用，不提交）
+
+- `JWT_SECRET_CURRENT`：本地 JWT 密钥
+- `JWT_SECRET_PREVIOUS`：可选，本地轮换过渡
+- `TURNSTILE_MODE`：`off | always | on_failure`
+- `TURNSTILE_SITE_KEY`：Turnstile 站点 Key
+- `WS_MAX_CONNECTIONS`：同 mailbox 最大 WS 连接数
+
+### D1（应用设置表 `app_settings`）
+
+- `allow_register`：是否允许注册（`0/1`）
+- `max_aliases`：每个邮箱最多别名数
+- `turnstile_mode/turnstile_site_key/turnstile_secret`：Turnstile 配置（可用 DB 覆盖环境变量）
+
+### 前端公开配置
+
+- 当前无必须公开的前端环境变量（开发环境通过 Vite 代理 `/api` 到 Worker）。
 
 ## 初始化
 

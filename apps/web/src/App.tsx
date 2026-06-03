@@ -54,7 +54,7 @@ function GuestView() {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: AuthUser; token: string }>("/api/auth/login", {
+      const data = await app.api.apiJson<{ user: AuthUser; token?: string }>("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -71,7 +71,7 @@ function GuestView() {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: AuthUser; token: string }>("/api/auth/register", {
+      const data = await app.api.apiJson<{ user: AuthUser; token?: string }>("/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password, mailboxLocal, domain }),
@@ -129,7 +129,6 @@ function ConsoleView() {
   });
 
   const sync = createMailSyncController({
-    getToken: app.token,
     getAddress: () => (session.mailboxAddress() || "").trim().toLowerCase(),
     getIsVisible: isVisible,
     apiJson: app.api.apiJson,
@@ -139,10 +138,9 @@ function ConsoleView() {
   });
 
   createEffect(() => {
-    const token = app.token();
     const address = (session.mailboxAddress() || "").trim().toLowerCase();
     isVisible();
-    if (token && address) {
+    if (app.mode() === "user" && address) {
       sync.start();
       return;
     }

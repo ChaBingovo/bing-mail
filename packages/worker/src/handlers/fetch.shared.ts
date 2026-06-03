@@ -66,6 +66,42 @@ export async function verifyJwtRotating(token: string, env: Env) {
   return prevPayload;
 }
 
+export const SESSION_COOKIE = "bingmail_session";
+
+export function getCookieValue(request: Request, name: string) {
+  const raw = request.headers.get("cookie") || "";
+  if (!raw) return null;
+  const parts = raw.split(";");
+  for (const part of parts) {
+    const p = part.trim();
+    if (!p) continue;
+    const eq = p.indexOf("=");
+    if (eq < 0) continue;
+    const k = p.slice(0, eq).trim();
+    if (k !== name) continue;
+    const v = p.slice(eq + 1).trim();
+    return v ? decodeURIComponent(v) : null;
+  }
+  return null;
+}
+
+export function getSessionTokenFromCookie(request: Request) {
+  return getCookieValue(request, SESSION_COOKIE);
+}
+
+export function makeSessionCookie(token: string, maxAgeSec: number, secure: boolean) {
+  const base = `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(
+    Math.floor(maxAgeSec || 0),
+    0,
+  )}`;
+  return secure ? `${base}; Secure` : base;
+}
+
+export function clearSessionCookie(secure: boolean) {
+  const base = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return secure ? `${base}; Secure` : base;
+}
+
 export function parseTurnstileMode(raw: string) {
   const v = (raw || "").trim().toLowerCase();
   if (v === "always" || v === "on_failure" || v === "off") return v;
@@ -299,7 +335,7 @@ export async function requireMessageAccess(env: Env, auth: { sub: string; isAdmi
 
 export async function requireAuth(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
-  const token = getBearerToken(request);
+  const token = getBearerToken(request) || getSessionTokenFromCookie(request);
   if (!token) return null;
   const payload = await verifyJwtRotating(token, env);
   if (!payload) return null;
@@ -309,7 +345,8 @@ export async function requireAuth(request: Request, env: Env) {
 export async function requireAuthWs(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
   const url = new URL(request.url);
-  const token = getBearerToken(request) || (url.searchParams.get("token") || "").trim();
+  const token =
+    getBearerToken(request) || getSessionTokenFromCookie(request) || (url.searchParams.get("token") || "").trim();
   if (!token) return null;
   const payload = await verifyJwtRotating(token, env);
   if (!payload) return null;

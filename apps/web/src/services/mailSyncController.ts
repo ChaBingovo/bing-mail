@@ -7,7 +7,7 @@ export type MailSyncController = {
 };
 
 export function createMailSyncController(params: {
-  getToken: () => string | null;
+  getToken?: () => string | null;
   getAddress: () => string;
   getIsVisible: () => boolean;
   apiJson: <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -83,10 +83,11 @@ export function createMailSyncController(params: {
     }
   };
 
-  const wsUrlFor = (token: string) => {
+  const wsUrlFor = (token: string | null) => {
     const protocol = typeof location !== "undefined" && location.protocol === "https:" ? "wss" : "ws";
     const host = typeof location !== "undefined" ? location.host : "";
-    return `${protocol}://${host}/api/user/ws?token=${encodeURIComponent(token)}`;
+    const t = (token || "").trim();
+    return t ? `${protocol}://${host}/api/user/ws?token=${encodeURIComponent(t)}` : `${protocol}://${host}/api/user/ws`;
   };
 
   const noteWsFailure = () => {
@@ -110,13 +111,12 @@ export function createMailSyncController(params: {
   const connectWs = () => {
     if (stopped || !params.getIsVisible()) return;
     if (ws) return;
-    const token = params.getToken();
-    if (!token) return;
     if (typeof WebSocket === "undefined") return;
     if (Date.now() < wsDisabledUntil) return;
     if (Date.now() < wsNextAttemptAt) return;
 
     try {
+      const token = params.getToken ? params.getToken() : null;
       ws = new WebSocket(wsUrlFor(token));
     } catch {
       noteWsFailure();
@@ -175,14 +175,14 @@ export function createMailSyncController(params: {
 
   const tick = async () => {
     if (stopped) return;
-    const token = params.getToken();
     const address = params.getAddress();
-    if (!token || !address) {
+    if (!address) {
       stop();
       return;
     }
 
-    resetForKey(`${address}|${token}`);
+    const token = params.getToken ? params.getToken() : null;
+    resetForKey(`${address}|${token || ""}`);
 
     if (!params.getIsVisible()) {
       closeWs();
@@ -196,12 +196,12 @@ export function createMailSyncController(params: {
   };
 
   const start = () => {
-    const token = params.getToken();
     const address = params.getAddress();
-    if (!token || !address) return;
+    if (!address) return;
     if (stopped) {
       stopped = false;
-      resetForKey(`${address}|${token}`);
+      const token = params.getToken ? params.getToken() : null;
+      resetForKey(`${address}|${token || ""}`);
       return;
     }
     schedule(50);

@@ -20,23 +20,22 @@ export type AppContextValue = {
   setSelectedId: (v: string | null) => void;
   unseenByMailbox: () => Record<string, number>;
   setUnseen: (address: string, count: number) => void;
-  login: (user: AuthUser, token: string) => void;
+  login: (user: AuthUser, token?: string | null) => void;
   logout: () => void;
   toGuest: () => void;
   api: ReturnType<typeof createApiClient>;
 };
 
-const TOKEN_KEY = "bingmail.token";
 const USER_KEY = "bingmail.user";
 const PAGE_KEY = "bingmail.page";
 
 const Ctx = createContext<AppContextValue>();
 
 export function AppProvider(props: { children: any }) {
-  const [token, setToken] = createSignal<string | null>(getString(TOKEN_KEY));
+  const [token, setToken] = createSignal<string | null>(null);
   const [currentUser, setCurrentUser] = createSignal<AuthUser | null>(getJson<AuthUser>(USER_KEY));
   const initialMode = ((): AppMode => {
-    if (token() && currentUser()) return "user";
+    if (currentUser()) return "user";
     return "guest";
   })();
   const [mode, setMode] = createSignal<AppMode>(initialMode);
@@ -62,7 +61,6 @@ export function AppProvider(props: { children: any }) {
   const [page, _setPage] = createSignal<AppPage>((getString(pageKey()) as AppPage) || "inbox");
 
   const toGuest = () => {
-    removeKey(TOKEN_KEY);
     removeKey(USER_KEY);
     setToken(null);
     setCurrentUser(null);
@@ -95,16 +93,16 @@ export function AppProvider(props: { children: any }) {
     setString(pageKey(), v);
   };
 
-  const login = (user: AuthUser, tokenValue: string) => {
+  const login = (user: AuthUser, tokenValue?: string | null) => {
     setJson(USER_KEY, user);
-    setString(TOKEN_KEY, tokenValue);
     setCurrentUser(user);
-    setToken(tokenValue);
+    setToken(tokenValue || null);
     setMode("user");
     setPage("inbox");
   };
 
   const logout = () => {
+    void api.apiJson("/api/auth/logout", { method: "POST" }).catch(() => {});
     toGuest();
   };
 
