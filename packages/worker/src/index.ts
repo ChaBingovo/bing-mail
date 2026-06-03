@@ -11,17 +11,23 @@ import { logError } from "./log";
 export default {
   fetch(request: Request, env: Env, _ctx: ExecutionContext) {
     const requestId = crypto.randomUUID();
+    const isWs = (request.headers.get("upgrade") || "").trim().toLowerCase() === "websocket";
     const headers = new Headers(request.headers);
     headers.set("x-request-id", requestId);
-    const tracedRequest = new Request(request, { headers });
+    const tracedRequest = isWs ? request : new Request(request, { headers });
     return handleFetch(tracedRequest, env)
       .then((res) => {
         const headers = new Headers(res.headers);
         headers.set("x-request-id", requestId);
+        const ws = (res as any).webSocket;
+        if (ws) {
+          return new Response(null, { status: 101, statusText: "Switching Protocols", headers, webSocket: ws });
+        }
+        if (res.status === 101) return res;
         return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
       })
       .catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.stack || err.message : String(err);
         logError({ event: "fetch_unhandled_error", requestId, error: message });
         return json({ error: "internal_error", requestId }, { status: 500, headers: { "x-request-id": requestId } });
       });
