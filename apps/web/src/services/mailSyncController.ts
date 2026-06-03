@@ -19,7 +19,11 @@ export function createMailSyncController(params: {
   let ws: WebSocket | null = null;
   let wsReady = false;
   let timer: number | null = null;
-  let backoffMs = 0;
+  let pollBackoffMs = 0;
+  let wsBackoffMs = 0;
+  let wsFailCount = 0;
+  let wsNextAttemptAt = 0;
+  let wsDisabledUntil = 0;
   let inflight = false;
   let queued = false;
   let lastRefetchAt = 0;
@@ -58,7 +62,7 @@ export function createMailSyncController(params: {
     const since = getLastSeen(address);
     try {
       const data = await params.apiJson<RedDotResponse>(`/api/user/red-dot?since=${encodeURIComponent(String(since))}`);
-      backoffMs = 0;
+      pollBackoffMs = 0;
       params.onUnreadChange(address, data.newCount);
       if (data.newCount > 0 && params.getIsVisible()) {
         params.onHint();
@@ -69,7 +73,7 @@ export function createMailSyncController(params: {
         }
       }
     } catch {
-      backoffMs = Math.min(backoffMs ? backoffMs * 2 : 1500, 30000);
+      pollBackoffMs = Math.min(pollBackoffMs ? pollBackoffMs * 2 : 1500, 30000);
     } finally {
       inflight = false;
       if (queued) {
@@ -85,24 +89,47 @@ export function createMailSyncController(params: {
     return `${protocol}://${host}/api/user/ws?token=${encodeURIComponent(token)}`;
   };
 
+  const noteWsFailure = () => {
+    const now = Date.now();
+    wsReady = false;
+    ws = null;
+    wsFailCount += 1;
+    wsBackoffMs = Math.min(wsBackoffMs ? wsBackoffMs * 2 : 1500, 30000);
+
+    if (wsFailCount >= 6) {
+      wsFailCount = 0;
+      wsBackoffMs = 0;
+      wsDisabledUntil = now + 60000;
+      wsNextAttemptAt = wsDisabledUntil;
+      return;
+    }
+
+    wsNextAttemptAt = now + wsBackoffMs;
+  };
+
   const connectWs = () => {
     if (stopped || !params.getIsVisible()) return;
     if (ws) return;
     const token = params.getToken();
     if (!token) return;
     if (typeof WebSocket === "undefined") return;
+    if (Date.now() < wsDisabledUntil) return;
+    if (Date.now() < wsNextAttemptAt) return;
 
     try {
       ws = new WebSocket(wsUrlFor(token));
     } catch {
-      ws = null;
-      schedule(baseInterval() + 1500);
+      noteWsFailure();
+      schedule(baseInterval() + pollBackoffMs);
       return;
     }
 
     ws.onopen = () => {
       wsReady = true;
-      backoffMs = 0;
+      wsBackoffMs = 0;
+      wsFailCount = 0;
+      wsNextAttemptAt = 0;
+      wsDisabledUntil = 0;
       schedule(50);
     };
     ws.onmessage = (evt) => {
@@ -124,10 +151,8 @@ export function createMailSyncController(params: {
       } catch {}
     };
     ws.onclose = () => {
-      wsReady = false;
-      ws = null;
-      backoffMs = Math.min(backoffMs ? backoffMs * 2 : 1500, 30000);
-      schedule(baseInterval() + backoffMs);
+      noteWsFailure();
+      schedule(baseInterval() + pollBackoffMs);
     };
   };
 
@@ -135,7 +160,11 @@ export function createMailSyncController(params: {
     if (key === activeKey) return;
     activeKey = key;
     wsReady = false;
-    backoffMs = 0;
+    pollBackoffMs = 0;
+    wsBackoffMs = 0;
+    wsFailCount = 0;
+    wsNextAttemptAt = 0;
+    wsDisabledUntil = 0;
     inflight = false;
     queued = false;
     lastRefetchAt = 0;
@@ -163,7 +192,7 @@ export function createMailSyncController(params: {
     }
 
     await poll(address);
-    schedule(baseInterval() + backoffMs);
+    schedule(baseInterval() + pollBackoffMs);
   };
 
   const start = () => {

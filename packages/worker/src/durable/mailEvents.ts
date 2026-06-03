@@ -35,7 +35,9 @@ export class MailEventsDO {
         if (msg === "ping") server.send("pong");
       });
 
-      return new Response(null, { status: 101, webSocket: client });
+      const res = new Response(null, { status: 101, webSocket: client } as any);
+      if (!(res as any).webSocket) Object.defineProperty(res, "webSocket", { value: client, configurable: true });
+      return res;
     }
 
     if (url.pathname === "/notify" && request.method === "POST") {
