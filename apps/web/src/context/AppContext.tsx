@@ -1,4 +1,4 @@
-import { createContext, createMemo, createSignal, useContext } from "solid-js";
+import { createContext, createEffect, createMemo, createSignal, useContext } from "solid-js";
 import type { AuthUser } from "../types";
 import { createApiClient } from "../services/api";
 import { getJson, getString, removeKey, setJson, setString } from "../services/storage";
@@ -70,6 +70,18 @@ export function AppProvider(props: { children: any }) {
   };
 
   const api = createApiClient(() => token(), toGuest);
+
+  let sessionCheckedForUserId = "";
+  createEffect(() => {
+    if (mode() !== "user") return;
+    const u = currentUser();
+    if (!u?.id) return;
+    if (sessionCheckedForUserId === u.id) return;
+    sessionCheckedForUserId = u.id;
+    void fetch("/api/user/mailbox", { method: "GET", credentials: "include" }).then((res) => {
+      if (res.status === 401) toGuest();
+    });
+  });
 
   const setActiveAddress = (v: string) => {
     const addr = (v || "").trim().toLowerCase();
