@@ -376,9 +376,7 @@ export async function requireAuth(request: Request, env: Env) {
 
 export async function requireAuthWs(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
-  const url = new URL(request.url);
-  const token =
-    getBearerToken(request) || getSessionTokenFromCookie(request) || (url.searchParams.get("token") || "").trim();
+  const token = getBearerToken(request) || getSessionTokenFromCookie(request);
   if (!token) return null;
   const payload = await verifyJwtRotating(token, env);
   if (!payload) return null;

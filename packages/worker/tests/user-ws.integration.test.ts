@@ -101,7 +101,9 @@ test("/api/user/ws upgrade, ping/pong, connection limit, notify fanout", async (
   } as any;
 
   const connect = async () => {
-    const req = new Request(`https://local/api/user/ws?token=${encodeURIComponent(token)}`, { headers: { upgrade: "websocket" } });
+    const req = new Request("https://local/api/user/ws", {
+      headers: { upgrade: "websocket", cookie: `bingmail_session=${encodeURIComponent(token)}` },
+    });
     const res = await handleUserRoutes(req, env, new URL(req.url), "/api/user/ws");
     expect(res?.status).toBe(101);
     const ws = (res as any).webSocket as MockWebSocket;
@@ -112,7 +114,9 @@ test("/api/user/ws upgrade, ping/pong, connection limit, notify fanout", async (
   const ws1 = await connect();
   const ws2 = await connect();
 
-  const req3 = new Request(`https://local/api/user/ws?token=${encodeURIComponent(token)}`, { headers: { upgrade: "websocket" } });
+  const req3 = new Request("https://local/api/user/ws", {
+    headers: { upgrade: "websocket", cookie: `bingmail_session=${encodeURIComponent(token)}` },
+  });
   const res3 = await handleUserRoutes(req3, env, new URL(req3.url), "/api/user/ws");
   expect(res3?.status).toBe(429);
 
@@ -140,4 +144,3 @@ test("/api/user/ws upgrade, ping/pong, connection limit, notify fanout", async (
   expect(hints1.length).toBe(1);
   expect(hints2.length).toBe(1);
 });
-
