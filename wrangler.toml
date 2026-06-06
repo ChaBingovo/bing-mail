@@ -30,7 +30,7 @@ database_id = "REPLACE_ME"
 
 [[r2_buckets]]
 binding = "MAIL_BUCKET"
-bucket_name = "bing-mail"
+bucket_name = "bingmail-mail"
 
 [[queues.producers]]
 binding = "PARSE_QUEUE"
@@ -47,7 +47,7 @@ class_name = "MailEventsDO"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MailEventsDO"]
+new_sqlite_classes = ["MailEventsDO"]
 
 [[durable_objects.bindings]]
 name = "AUTH_RATE"
@@ -55,4 +55,4 @@ class_name = "AuthRateLimitDO"
 
 [[migrations]]
 tag = "v2"
-new_classes = ["AuthRateLimitDO"]
+new_sqlite_classes = ["AuthRateLimitDO"]
