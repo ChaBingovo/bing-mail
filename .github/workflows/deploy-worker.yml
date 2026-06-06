@@ -25,6 +25,9 @@ jobs:
       - name: Install deps (worker)
         run: bun install --cwd packages/worker --backend=copyfile --omit optional
 
+      - name: Install deps (web)
+        run: bun install --cwd apps/web --backend=copyfile --omit optional
+
       - name: Typecheck (worker)
         run: bun --cwd packages/worker typecheck
 
