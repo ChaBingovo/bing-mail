@@ -74,6 +74,10 @@ jobs:
             exit 1
           fi
           echo "Resolved D1_ID=$D1_ID"
+          if ! printf "%s" "$D1_ID" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+            echo "Resolved D1_ID is not a valid UUID: $D1_ID" >&2
+            exit 1
+          fi
 
           D1_ID="$D1_ID" python3 - <<'PY'
           import os
@@ -90,6 +94,10 @@ jobs:
           PY
           echo "wrangler.toml now has:"
           grep -n "database_id" wrangler.toml || true
+          if grep -Eq 'database_id\s*=\s*"(REPLACE_ME|)"' wrangler.toml; then
+            echo "wrangler.toml still has placeholder database_id after patch" >&2
+            exit 1
+          fi
 
       - name: Deploy
         env:
@@ -99,6 +107,10 @@ jobs:
           set -euo pipefail
           echo "wrangler.toml before deploy:"
           grep -n "database_id" wrangler.toml || true
+          if grep -Eq 'database_id\s*=\s*"(REPLACE_ME|)"' wrangler.toml; then
+            echo "wrangler.toml has placeholder database_id before deploy" >&2
+            exit 1
+          fi
           set +e
           bun run deploy:worker 2>&1 | tee /tmp/deploy.log
           CODE=${PIPESTATUS[0]}
