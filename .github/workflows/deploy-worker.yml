@@ -61,7 +61,7 @@ jobs:
             echo "Failed to list D1 databases. Check CLOUDFLARE_API_TOKEN permissions (needs D1)."
             exit 1
           }
-          D1_ID="$(printf "%s" "$D1_LIST_JSON" | python3 -c "import json,sys; dbs=json.load(sys.stdin); print(next((d.get('uuid') for d in dbs if d.get('name')=='bingmail'), ''), end='')")"
+          D1_ID="$(printf "%s" "$D1_LIST_JSON" | python3 -c "import json,sys; dbs=json.load(sys.stdin); d=next((x for x in dbs if x.get('name')=='bingmail'), None); keys=('uuid','id','database_id'); print(next((d.get(k) for k in keys if d and isinstance(d.get(k), str) and d.get(k)), ''), end='')")"
           if [ -z "$D1_ID" ]; then
             OUT="$(bunx wrangler d1 create bingmail --cwd .)" || {
               echo "Failed to create D1 database. Check CLOUDFLARE_API_TOKEN permissions (needs D1)."
@@ -73,6 +73,7 @@ jobs:
             echo "Failed to resolve D1 database id for 'bingmail'" >&2
             exit 1
           fi
+          echo "Resolved D1_ID=$D1_ID"
 
           D1_ID="$D1_ID" python3 - <<'PY'
           import os
@@ -87,6 +88,8 @@ jobs:
           text = re.sub(r'database_id\\s*=\\s*\"[^\"]*\"', f'database_id = \"{d1_id}\"', text)
           p.write_text(text, encoding="utf-8")
           PY
+          echo "wrangler.toml now has:"
+          grep -n "database_id" wrangler.toml || true
 
       - name: Deploy
         env:
@@ -94,6 +97,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          echo "wrangler.toml before deploy:"
+          grep -n "database_id" wrangler.toml || true
           set +e
           bun run deploy:worker 2>&1 | tee /tmp/deploy.log
           CODE=${PIPESTATUS[0]}
