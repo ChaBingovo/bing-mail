@@ -89,7 +89,7 @@ jobs:
             raise SystemExit("Missing D1_ID")
           p = pathlib.Path("wrangler.toml")
           text = p.read_text(encoding="utf-8")
-          text = re.sub(r'database_id\\s*=\\s*\"[^\"]*\"', f'database_id = \"{d1_id}\"', text)
+          text = re.sub(r'database_id\s*=\s*"[^"]*"', f'database_id = "{d1_id}"', text)
           p.write_text(text, encoding="utf-8")
           PY
           echo "wrangler.toml now has:"
