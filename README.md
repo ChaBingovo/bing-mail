@@ -172,14 +172,32 @@ bun run deploy:worker
 
 仓库包含工作流：[.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)。
 
-在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中添加：
+触发条件：
+
+- 手动触发（`workflow_dispatch`）
+- 推送到 `main` 或 `beta` 分支
+
+工作流会依次执行：
+
+- 安装 `packages/worker` 与 `apps/web` 依赖
+- Worker typecheck
+- 同步 Cloudflare Secrets（见下方）
+- 执行 `bun run deploy:worker`（其中 Wrangler 会先跑一次 web build，并将 `apps/web/dist` 作为静态资源一起发布）
+
+在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中添加以下 Secrets：
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `JWT_SECRET_CURRENT`
 - `JWT_SECRET_PREVIOUS`（可选）
 
-第一次需要在 Actions 页面手动运行一次工作流；之后推送到 `main` 或 `beta` 分支会自动部署。
+第一次建议在 Actions 页面手动运行一次工作流（用于确认权限/资源配置无误）；之后推送到 `main` 或 `beta` 分支会自动部署。
+
+注意事项：
+
+- 在启用 CI 自动部署之前，必须先把 Cloudflare 资源创建好，并将 D1 的 `database_id` 回填到 [wrangler.toml](./wrangler.toml)（默认值是 `REPLACE_ME`，不改会导致 `wrangler deploy` 直接失败）。
+- 当前工作流会同步 `JWT_SECRET_CURRENT` 与 `JWT_SECRET_PREVIOUS`，如果你启用了 Turnstile，需要自行在 Cloudflare 侧配置 `TURNSTILE_SECRET`（或自行扩展工作流同步）。
+- `main` 与 `beta` 默认都会部署到同一个 Worker（由 `wrangler.toml` 的 `name = "bingmail"` 决定）。如果你希望 `beta` 单独一套 Worker / D1 / R2 / Queue，需要新增 `wrangler.toml` 的 `env` 配置并在工作流里用 `wrangler deploy --env beta`。
 
 ## 配置速查
 
