@@ -23,7 +23,7 @@ jobs:
           bun-version: latest
 
       - name: Install deps (worker)
-        run: bun install --cwd packages/worker --backend=copyfile --omit optional
+        run: bun install --cwd packages/worker --backend=copyfile
 
       - name: Install deps (web)
         run: bun install --cwd apps/web --backend=copyfile

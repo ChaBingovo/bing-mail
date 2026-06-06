@@ -23,7 +23,7 @@ git config --global core.quotepath false
 
 ```bash
 bun install
-bun install --cwd packages/worker --backend=copyfile --omit optional
+bun install --cwd packages/worker --backend=copyfile
 bun install --cwd apps/web --backend=copyfile
 ```
 
