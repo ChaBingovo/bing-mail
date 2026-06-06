@@ -24,7 +24,7 @@ git config --global core.quotepath false
 ```bash
 bun install
 bun install --cwd packages/worker --backend=copyfile --omit optional
-bun install --cwd apps/web --backend=copyfile --omit optional
+bun install --cwd apps/web --backend=copyfile
 ```
 
 ### 2. 配置本地环境变量（Wrangler）
@@ -68,4 +68,3 @@ bun --cwd packages/worker db:reset:local
 bun run db:migrate
 bun --cwd packages/worker db:seed:dev
 ```
-

@@ -60,7 +60,7 @@ Bingmail 是一个部署在 Cloudflare 上的个人网页邮箱：用自己的�
 ```bash
 bun install
 bun install --cwd packages/worker --backend=copyfile --omit optional
-bun install --cwd apps/web --backend=copyfile --omit optional
+bun install --cwd apps/web --backend=copyfile
 ```
 
 ### 配置本地变量
