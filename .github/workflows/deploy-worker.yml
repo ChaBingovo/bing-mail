@@ -49,8 +49,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          bunx wrangler r2 bucket create bing-mail --cwd . || true
-          bunx wrangler queues create bingmail-parse --cwd . || true
+          if ! bunx wrangler r2 bucket create bing-mail --cwd .; then
+            echo "R2 bucket may already exist, continuing..."
+          fi
+
+          if ! bunx wrangler queues create bingmail-parse --cwd .; then
+            echo "Queue may already exist, continuing..."
+          fi
 
           D1_LIST_JSON="$(bunx wrangler d1 list --json --cwd .)" || {
             echo "Failed to list D1 databases. Check CLOUDFLARE_API_TOKEN permissions (needs D1)."
@@ -69,11 +74,17 @@ jobs:
             exit 1
           fi
 
-          python3 - <<PY
-          import pathlib,re
+          D1_ID="$D1_ID" python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          d1_id = os.environ.get("D1_ID", "")
+          if not d1_id:
+            raise SystemExit("Missing D1_ID")
           p = pathlib.Path("wrangler.toml")
           text = p.read_text(encoding="utf-8")
-          text = re.sub(r'database_id\\s*=\\s*\"[^\"]*\"', f'database_id = \"{D1_ID}\"', text)
+          text = re.sub(r'database_id\\s*=\\s*\"[^\"]*\"', f'database_id = \"{d1_id}\"', text)
           p.write_text(text, encoding="utf-8")
           PY
 
