@@ -93,16 +93,25 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
           set +e
-          bun run deploy:worker
-          CODE=$?
+          bun run deploy:worker 2>&1 | tee /tmp/deploy.log
+          CODE=${PIPESTATUS[0]}
+          set -e
+
           if [ $CODE -ne 0 ]; then
+            echo "Deploy failed. Showing deploy output:"
+            tail -n 4000 /tmp/deploy.log || true
+
             echo "Deploy failed. Showing latest Wrangler log:"
-            LOG="$(ls -t ~/.config/.wrangler/logs/wrangler-*.log 2>/dev/null | head -n 1)"
-            if [ -n "$LOG" ]; then
-              tail -n 200 "$LOG"
+            LOG="$(ls -t ~/.config/.wrangler/logs/wrangler-*.log 2>/dev/null | head -n 1 || true)"
+            if [ -n "${LOG:-}" ]; then
+              echo "Wrangler log path: $LOG"
+              sed -n '1,200p' "$LOG" || true
+              tail -n 4000 "$LOG" || true
             else
               echo "No Wrangler log file found at ~/.config/.wrangler/logs/"
             fi
           fi
+
           exit $CODE
