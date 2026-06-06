@@ -172,7 +172,7 @@ bun run deploy:worker
 
 仓库包含工作流：[.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)。
 
-1. 在 Cloudflare 创建 API Token（用于 Wrangler 部署），并复制 Account ID（需要包含 Workers / D1 / R2 / Queues 权限）。
+1. 在 Cloudflare 创建 API Token（用于 Wrangler 部署（需要包含 Workers / D1 / R2 / Queues 权限[模板要添加 D1和Queues]）），并复制 Account ID。
 2. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 添加：
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
