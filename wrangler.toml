@@ -30,7 +30,7 @@ database_id = "REPLACE_ME"
 
 [[r2_buckets]]
 binding = "MAIL_BUCKET"
-bucket_name = "bingmail-mail"
+bucket_name = "bing-mail"
 
 [[queues.producers]]
 binding = "PARSE_QUEUE"

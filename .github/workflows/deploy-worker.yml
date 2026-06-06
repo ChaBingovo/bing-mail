@@ -43,6 +43,33 @@ jobs:
             printf "%s" "$JWT_SECRET_PREVIOUS" | bunx wrangler secret put JWT_SECRET_PREVIOUS --cwd .
           fi
 
+      - name: Ensure resources
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          bunx wrangler r2 bucket create bing-mail --cwd . || true
+          bunx wrangler queues create bingmail-parse --cwd . || true
+
+          D1_ID="$(bunx wrangler d1 list --json --cwd . | python3 -c "import json,sys; dbs=json.load(sys.stdin); print(next((d['uuid'] for d in dbs if d.get('name')=='bingmail'), ''), end='')")"
+          if [ -z "$D1_ID" ]; then
+            OUT="$(bunx wrangler d1 create bingmail --cwd .)"
+            D1_ID="$(printf "%s" "$OUT" | python3 -c "import re,sys; m=re.search(r'database_id\\s*=\\s*\"([0-9a-f\\-]{36})\"', sys.stdin.read()); print(m.group(1) if m else '', end='')")"
+          fi
+          if [ -z "$D1_ID" ]; then
+            echo "Failed to resolve D1 database id for 'bingmail'" >&2
+            exit 1
+          fi
+
+          python3 - <<PY
+          import pathlib,re
+          p = pathlib.Path("wrangler.toml")
+          text = p.read_text(encoding="utf-8")
+          text = re.sub(r'database_id\\s*=\\s*\"[^\"]*\"', f'database_id = \"{D1_ID}\"', text)
+          p.write_text(text, encoding="utf-8")
+          PY
+
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

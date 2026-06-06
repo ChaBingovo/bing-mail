@@ -130,7 +130,7 @@ bunx wrangler login
 
 ```bash
 bunx wrangler d1 create bingmail
-bunx wrangler r2 bucket create bingmail-mail
+bunx wrangler r2 bucket create bing-mail
 bunx wrangler queues create bingmail-parse
 ```
 
