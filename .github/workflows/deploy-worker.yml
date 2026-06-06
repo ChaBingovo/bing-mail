@@ -48,13 +48,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set -e
+          set -euo pipefail
           bunx wrangler r2 bucket create bing-mail --cwd . || true
           bunx wrangler queues create bingmail-parse --cwd . || true
 
-          D1_ID="$(bunx wrangler d1 list --json --cwd . | python3 -c "import json,sys; dbs=json.load(sys.stdin); print(next((d['uuid'] for d in dbs if d.get('name')=='bingmail'), ''), end='')")"
+          D1_LIST_JSON="$(bunx wrangler d1 list --json --cwd .)" || {
+            echo "Failed to list D1 databases. Check CLOUDFLARE_API_TOKEN permissions (needs D1)."
+            exit 1
+          }
+          D1_ID="$(printf "%s" "$D1_LIST_JSON" | python3 -c "import json,sys; dbs=json.load(sys.stdin); print(next((d.get('uuid') for d in dbs if d.get('name')=='bingmail'), ''), end='')")"
           if [ -z "$D1_ID" ]; then
-            OUT="$(bunx wrangler d1 create bingmail --cwd .)"
+            OUT="$(bunx wrangler d1 create bingmail --cwd .)" || {
+              echo "Failed to create D1 database. Check CLOUDFLARE_API_TOKEN permissions (needs D1)."
+              exit 1
+            }
             D1_ID="$(printf "%s" "$OUT" | python3 -c "import re,sys; m=re.search(r'database_id\\s*=\\s*\"([0-9a-f\\-]{36})\"', sys.stdin.read()); print(m.group(1) if m else '', end='')")"
           fi
           if [ -z "$D1_ID" ]; then
