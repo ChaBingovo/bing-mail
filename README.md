@@ -1,23 +1,132 @@
 # Bingmail
 
-基于 Cloudflare Email Routing + Workers + R2 + D1 + Queues 的网页邮箱实验工程。
+Bingmail 是一个部署在 Cloudflare 上的个人网页邮箱：用自己的域名收信，在浏览器里查看邮件、管理别名、搜索历史邮件，并用实时通知和 AI 验证码提取提升日常使用效率。
 
-## 部署（Cloudflare Workers）
+当前重点是“可靠收信 + 网页收件箱”。发信能力尚未作为主流程接入，请先把它当作主力收件箱、验证码邮箱和别名管理工具使用。
+
+## 日常使用
+
+### 第一次打开
+
+部署完成后访问 Worker 域名或绑定的自定义域名。系统会进入初始化向导，需要完成：
+
+1. 创建管理员账号。
+2. 填写邮箱域名。
+3. 分配管理员主邮箱地址。
+
+每个账号只有一个主邮箱地址，额外地址通过“别名”管理。别名收到的邮件会进入同一个收件箱。
+
+### 收信
+
+1. 在 Cloudflare 控制台启用 Email Routing，并确保域名 MX 记录已生效。
+2. 把需要接收的地址路由到 Bingmail Worker。
+3. 登录网页端，邮件会进入收件箱；新邮件解析完成后会通过通知中心提示。
+
+如果页面已经打开，Bingmail 会优先使用 WebSocket 接收新邮件通知；断线或后台场景下仍可通过刷新/同步看到最新邮件。
+
+### 查看和搜索邮件
+
+- 左侧列表查看最近邮件，点开邮件可阅读正文。
+- 验证码类邮件会显示 AI 提取的验证码卡片，适合日常登录、注册场景。
+- 使用 `Cmd+K` 或 `Ctrl+K` 打开 Spotlight 搜索，可搜索邮件、切换别名或跳转页面。
+
+### 管理别名
+
+普通用户可以在设置里查看主邮箱并新增/删除别名。别名数量由管理员配置，默认来自数据库设置 `max_aliases`。
+
+适合的使用方式：
+
+- 主邮箱用于长期身份。
+- 别名用于注册服务、临时订阅、不同用途分流。
+- 不再使用的别名可以停用，避免继续收信。
+
+### 管理员日常维护
+
+管理员可以在后台完成：
+
+- 创建用户和分配邮箱地址。
+- 调整每个账号可创建的别名数量。
+- 开关注册入口。
+- 配置 Turnstile 人机验证策略。
+
+建议公开使用时启用 Turnstile，并关闭不需要的公开注册。
+
+## 本地使用
+
+详细开发说明见 [docs/dev.md](./docs/dev.md)。
+
+### 安装依赖
+
+```bash
+bun install
+bun install --cwd packages/worker --backend=copyfile --omit optional
+bun install --cwd apps/web --backend=copyfile --omit optional
+```
+
+### 配置本地变量
+
+在仓库根目录创建 `.dev.vars`：
+
+```ini
+JWT_SECRET_CURRENT=dev-secret
+JWT_SECRET_PREVIOUS=
+WS_MAX_CONNECTIONS=3
+TURNSTILE_MODE=off
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET=
+```
+
+### 初始化本地数据库
+
+```bash
+bun run db:migrate
+bun --cwd packages/worker db:seed:dev
+```
+
+开发 seed 默认账号：
+
+- 用户名：`default`
+- 密码：`default1234`
+
+### 启动
+
+分别启动 Worker 和前端：
+
+```bash
+bun run dev:worker
+bun run dev:web
+```
+
+前端开发环境通过 Vite 代理 `/api` 到 Worker。
+
+### 清空本地数据
+
+项目仍处于开发阶段，本地数据库可以直接重建：
+
+```bash
+bun --cwd packages/worker db:reset:local
+bun run db:migrate
+bun --cwd packages/worker db:seed:dev
+```
+
+## 部署到 Cloudflare
+
+部署检查清单见 [docs/deploy-checklist.md](./docs/deploy-checklist.md)。
 
 ### 前置条件
 
-- 一个已接入 Cloudflare 的域名，并在 Cloudflare 控制台启用 Email Routing
-- 已安装 Bun（本仓库脚本默认用 Bun 驱动 Wrangler）
-
-### 创建 Cloudflare 资源
-
-1. 登录 Wrangler
+- 一个已接入 Cloudflare 的域名。
+- Cloudflare Email Routing 已启用。
+- 已安装 Bun。
+- Wrangler 已登录。
 
 ```bash
 bunx wrangler login
 ```
 
-2. 创建 D1 / R2 / Queue（名称需与 [wrangler.toml](./wrangler.toml) 一致）
+### 创建资源
+
+资源名称需要与 [wrangler.toml](./wrangler.toml) 保持一致：
 
 ```bash
 bunx wrangler d1 create bingmail
@@ -25,9 +134,7 @@ bunx wrangler r2 bucket create bingmail-mail
 bunx wrangler queues create bingmail-parse
 ```
 
-3. 回填 D1 database_id
-
-`wrangler d1 create` 会输出 database_id，请将其写入 [wrangler.toml](./wrangler.toml) 的 `database_id`：
+把 `bunx wrangler d1 create bingmail` 输出的 `database_id` 写入 [wrangler.toml](./wrangler.toml)：
 
 ```toml
 [[d1_databases]]
@@ -36,127 +143,65 @@ database_name = "bingmail"
 database_id = "REPLACE_ME"
 ```
 
-### 配置 Secret
-
-本项目需要 `JWT_SECRET_CURRENT` 用于登录态签名（不要提交到仓库）。可选配置 `JWT_SECRET_PREVIOUS` 用于平滑轮换：
+### 配置 Secrets
 
 ```bash
 bunx wrangler secret put JWT_SECRET_CURRENT
 bunx wrangler secret put JWT_SECRET_PREVIOUS
+bunx wrangler secret put TURNSTILE_SECRET
 ```
 
-### Wrangler 部署（推荐）
+`JWT_SECRET_CURRENT` 必须配置；`JWT_SECRET_PREVIOUS` 用于密钥轮换；`TURNSTILE_SECRET` 仅在启用 Turnstile 时需要。
 
-```bash
-bun run deploy:worker
-```
-
-### GitHub Actions 自动部署
-
-仓库已包含工作流： [.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)
-
-在 GitHub 仓库 Settings → Secrets and variables → Actions 中添加：
-
-- `CLOUDFLARE_API_TOKEN`：具有 Workers 部署权限的 API Token
-- `CLOUDFLARE_ACCOUNT_ID`：Cloudflare Account ID
-- `JWT_SECRET_CURRENT`：登录态签名密钥（会由工作流同步到 Cloudflare Worker Secret）
-- `JWT_SECRET_PREVIOUS`：可选，用于平滑轮换旧密钥
-
-第一次需要在 Actions 页面手动运行一次该工作流（用于“解锁”自动部署）；之后每次推送到 `main` 分支会自动部署。
-
-### 仪表盘部署（不走本地 Wrangler）
-
-Workers & Pages → Create → 选择从 GitHub 部署（或连接已有仓库），并确保在构建环境中能安装 `packages/worker` 的依赖并执行部署。
-
-如果使用 npm（控制台默认），可参考：
-
-```bash
-npm --prefix packages/worker ci
-npx --prefix packages/worker wrangler deploy --cwd .
-```
-
-并在仪表盘中配置与本地一致的 Secrets（至少 `JWT_SECRET`）。
-
-## 本地开发
-
-更多本地开发细节（UTF-8、seed/reset、`.dev.vars` 示例）见：[dev.md](file:///c:/Users/ChaBi/Desktop/Bingmail/docs/dev.md)
-
-1. 安装依赖
-
-```bash
-bun install
-bun install --cwd packages/worker --backend=copyfile --omit optional
-bun install --cwd apps/web --backend=copyfile --omit optional
-```
-
-2. 启动 Worker（包含 Email 收单、Queue Consumer、HTTP API）
-
-```bash
-bun run dev:worker
-```
-
-3. 启动前端
-
-```bash
-bun run dev:web
-```
-
-## 部署 Checklist
-
-见：[deploy-checklist.md](file:///c:/Users/ChaBi/Desktop/Bingmail/docs/deploy-checklist.md)
-
-## 配置归类
-
-### Cloudflare Secrets（敏感）
-
-- `JWT_SECRET_CURRENT`：JWT 签名密钥（必须）
-- `JWT_SECRET_PREVIOUS`：旧 JWT 密钥（可选，用于轮换过渡）
-- `TURNSTILE_SECRET`：Turnstile 服务端密钥（启用 Turnstile 时需要）
-
-### `.dev.vars`（本地开发专用，不提交）
-
-- `JWT_SECRET_CURRENT`：本地 JWT 密钥
-- `JWT_SECRET_PREVIOUS`：可选，本地轮换过渡
-- `TURNSTILE_MODE`：`off | always | on_failure`
-- `TURNSTILE_SITE_KEY`：Turnstile 站点 Key
-- `WS_MAX_CONNECTIONS`：同 mailbox 最大 WS 连接数
-
-### D1（应用设置表 `app_settings`）
-
-- `allow_register`：是否允许注册（`0/1`）
-- `max_aliases`：每个邮箱最多别名数
-- `turnstile_mode/turnstile_site_key/turnstile_secret`：Turnstile 配置（可用 DB 覆盖环境变量）
-
-### 前端公开配置
-
-- 当前无必须公开的前端环境变量（开发环境通过 Vite 代理 `/api` 到 Worker）。
-
-## 初始化
-
-系统启动后会先进入初始化向导：创建管理员账户、记录域名、分配管理员主邮箱地址。每个账户仅有一个主邮箱地址，额外邮箱通过“别名”管理。
-
-## 数据库初始化
-
-- 生成迁移（可选）
-
-```bash
-bun run db:generate
-```
-
-- 执行迁移（依赖 Wrangler 的 D1 配置与数据库已创建）
+### 迁移和部署
 
 ```bash
 bun run db:migrate
+bun run check
+bun run deploy:worker
 ```
 
-- 写入开发 seed（默认用户）
+部署后建议验证：
 
-```bash
-bun run db:seed:dev
-```
+- 初始化向导或登录页能正常打开。
+- `/api/setup/status` 返回正常。
+- Email Routing 能把测试邮件投递到 Worker。
+- 收件箱能看到测试邮件，通知和搜索可用。
 
-## 清空本地数据（从头开始）
+## GitHub Actions 自动部署
 
-```bash
-bun --cwd packages/worker db:reset:local
-```
+仓库包含工作流：[.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)。
+
+在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中添加：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `JWT_SECRET_CURRENT`
+- `JWT_SECRET_PREVIOUS`（可选）
+
+第一次需要在 Actions 页面手动运行一次工作流；之后推送到 `main` 或 `beta` 分支会自动部署。
+
+## 配置速查
+
+Cloudflare Secrets：
+
+- `JWT_SECRET_CURRENT`：JWT 签名密钥，必须。
+- `JWT_SECRET_PREVIOUS`：旧 JWT 密钥，可选。
+- `TURNSTILE_SECRET`：Turnstile 服务端密钥，可选。
+
+`.dev.vars` 本地变量：
+
+- `JWT_SECRET_CURRENT`
+- `JWT_SECRET_PREVIOUS`
+- `TURNSTILE_MODE`：`off | always | on_failure`
+- `TURNSTILE_SITE_KEY`
+- `TURNSTILE_SECRET`
+- `WS_MAX_CONNECTIONS`
+
+D1 应用设置表 `app_settings`：
+
+- `allow_register`：是否允许注册，`0/1`。
+- `max_aliases`：每个邮箱最多别名数。
+- `turnstile_mode`
+- `turnstile_site_key`
+- `turnstile_secret`
