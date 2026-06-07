@@ -63,10 +63,22 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   ctx.waitUntil(
     (async () => {
       try {
-        await env.MAIL_BUCKET.put(rawKey, message.raw, {
+        const meta = {
           httpMetadata: { contentType: "message/rfc822" },
           customMetadata: { mailboxId: target.id, receivedAt: String(receivedAt) },
-        });
+        };
+
+        const rawSize = (message as any).rawSize;
+        const FixedLengthStreamCtor = (globalThis as any).FixedLengthStream;
+        if (typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 && typeof FixedLengthStreamCtor === "function") {
+          const fls = new FixedLengthStreamCtor(rawSize);
+          const piping = message.raw.pipeTo(fls.writable);
+          await env.MAIL_BUCKET.put(rawKey, fls.readable, meta);
+          await piping;
+        } else {
+          const buf = await new Response(message.raw).arrayBuffer();
+          await env.MAIL_BUCKET.put(rawKey, buf, meta);
+        }
         await env.DB.prepare(
           "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
         )
