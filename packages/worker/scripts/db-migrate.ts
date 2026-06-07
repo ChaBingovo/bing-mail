@@ -4,6 +4,8 @@ import path from "node:path";
 const DB_NAME = "bingmail";
 const MIGRATIONS_TABLE = "__bingmail_migrations";
 const PROJECT_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
+const IS_REMOTE = process.argv.includes("--remote") && !process.argv.includes("--local");
+const EXEC_MODE_ARGS = IS_REMOTE ? ["--remote"] : ["--local"];
 
 type WranglerExecuteResult = Array<{
   results?: Array<Record<string, unknown>>;
@@ -26,7 +28,16 @@ async function runWrangler(args: string[]) {
 }
 
 async function execJson(sql: string) {
-  const { stdout } = await runWrangler(["d1", "execute", DB_NAME, "--local", "--yes", "--json", "--command", sql]);
+  const { stdout } = await runWrangler([
+    "d1",
+    "execute",
+    DB_NAME,
+    ...EXEC_MODE_ARGS,
+    "--yes",
+    "--json",
+    "--command",
+    sql,
+  ]);
   const start = stdout.search(/[\[{]/);
   if (start < 0) return null;
   const head = stdout.slice(start).trim();
@@ -39,7 +50,7 @@ async function execJson(sql: string) {
 }
 
 async function execFile(filePath: string) {
-  await runWrangler(["d1", "execute", DB_NAME, "--local", "--yes", "--file", filePath]);
+  await runWrangler(["d1", "execute", DB_NAME, ...EXEC_MODE_ARGS, "--yes", "--file", filePath]);
 }
 
 async function main() {

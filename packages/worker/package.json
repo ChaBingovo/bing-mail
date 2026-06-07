@@ -17,6 +17,7 @@
     "test": "bun test",
     "typecheck": "bunx tsc -p tsconfig.json",
     "db:migrate": "bun ./scripts/db-migrate.ts",
+    "db:migrate:remote": "bun ./scripts/db-migrate.ts --remote",
     "db:seed:dev": "bunx wrangler d1 execute bingmail --local --yes --cwd ../.. --file ../db/seeds/dev.sql",
     "db:reset:local": "bun ./scripts/db-reset-local.ts"
   }
