@@ -83,9 +83,12 @@ export function createMailSyncController(params: {
     }
   };
 
-  const wsUrlFor = () => {
-    const protocol = typeof location !== "undefined" && location.protocol === "https:" ? "wss" : "ws";
-    const host = typeof location !== "undefined" ? location.host : "";
+  const wsUrlFor = (): string | null => {
+    const loc =
+      typeof location !== "undefined" ? location : typeof window !== "undefined" ? window.location : null;
+    const host = loc?.host || "";
+    if (!host) return null;
+    const protocol = loc?.protocol === "https:" ? "wss" : "ws";
     return `${protocol}://${host}/api/user/ws`;
   };
 
@@ -115,7 +118,9 @@ export function createMailSyncController(params: {
     if (Date.now() < wsNextAttemptAt) return;
 
     try {
-      ws = new WebSocket(wsUrlFor());
+      const url = wsUrlFor();
+      if (!url) return;
+      ws = new WebSocket(url);
     } catch {
       noteWsFailure();
       schedule(baseInterval() + pollBackoffMs);
