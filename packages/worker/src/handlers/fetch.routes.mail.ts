@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
+import { logWarn } from "../log";
 import * as S from "./fetch.shared";
 
 export async function handleMailRoutes(request: Request, env: Env, url: URL, pathname: string): Promise<Response | null> {
@@ -119,13 +120,21 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     }
     if (target.protocol !== "https:" && target.protocol !== "http:") return text("", { status: 400 });
 
-    const res = await fetch(target.toString(), {
-      redirect: "follow",
-      headers: {
-        "user-agent": "bingmail/1.0",
-        "accept": "image/*",
-      },
-    });
+    const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
+    let res: Response;
+    try {
+      res = await fetch(target.toString(), {
+        redirect: "follow",
+        headers: {
+          "user-agent": "bingmail/1.0",
+          "accept": "image/*",
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn({ event: "media_proxy_fetch_failed", requestId, error: message });
+      return text("", { status: 503, headers: { "x-request-id": requestId } });
+    }
     if (!res.ok) return text("", { status: 404 });
 
     const ctRaw = (res.headers.get("content-type") || "").toLowerCase();
