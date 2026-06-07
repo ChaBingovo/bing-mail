@@ -71,35 +71,19 @@ export function isValidUsername(username: string) {
   return /^[a-zA-Z0-9_]{3,32}$/.test(username);
 }
 
-export function getJwtSecretCurrent(env: Env) {
-  const v = typeof env.JWT_SECRET_CURRENT === "string" ? env.JWT_SECRET_CURRENT.trim() : "";
-  if (v) return v;
-  const legacy = typeof env.JWT_SECRET === "string" ? env.JWT_SECRET.trim() : "";
-  return legacy || null;
-}
-
-export function getJwtSecretPrevious(env: Env) {
-  const v = typeof env.JWT_SECRET_PREVIOUS === "string" ? env.JWT_SECRET_PREVIOUS.trim() : "";
+export function getJwtSecret(env: Env) {
+  const v = typeof env.JWT_SECRET === "string" ? env.JWT_SECRET.trim() : "";
   return v || null;
 }
 
 export function hasJwtSecret(env: Env) {
-  return Boolean(getJwtSecretCurrent(env));
+  return Boolean(getJwtSecret(env));
 }
 
-export async function verifyJwtRotating(token: string, env: Env) {
-  const current = getJwtSecretCurrent(env);
-  if (!current) return null;
-  const payload = await verifyJwt(token, current);
-  if (payload) return payload;
-  const prev = getJwtSecretPrevious(env);
-  if (!prev) return null;
-  const prevPayload = await verifyJwt(token, prev);
-  if (!prevPayload) return null;
-  const now = Math.floor(Date.now() / 1000);
-  const maxExp = now + 14 * 24 * 60 * 60;
-  if (prevPayload.exp > maxExp) return null;
-  return prevPayload;
+export async function verifyJwtWithEnv(token: string, env: Env) {
+  const secret = getJwtSecret(env);
+  if (!secret) return null;
+  return verifyJwt(token, secret);
 }
 
 export const SESSION_COOKIE = "bingmail_session";
@@ -369,7 +353,7 @@ export async function requireAuth(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
   const token = getBearerToken(request) || getSessionTokenFromCookie(request);
   if (!token) return null;
-  const payload = await verifyJwtRotating(token, env);
+  const payload = await verifyJwtWithEnv(token, env);
   if (!payload) return null;
   return payload;
 }
@@ -378,7 +362,7 @@ export async function requireAuthWs(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
   const token = getBearerToken(request) || getSessionTokenFromCookie(request);
   if (!token) return null;
-  const payload = await verifyJwtRotating(token, env);
+  const payload = await verifyJwtWithEnv(token, env);
   if (!payload) return null;
   return payload;
 }

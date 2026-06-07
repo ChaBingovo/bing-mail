@@ -35,13 +35,14 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          JWT_SECRET_CURRENT: ${{ secrets.JWT_SECRET_CURRENT }}
-          JWT_SECRET_PREVIOUS: ${{ secrets.JWT_SECRET_PREVIOUS }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
-          printf "%s" "$JWT_SECRET_CURRENT" | bunx wrangler secret put JWT_SECRET_CURRENT --cwd .
-          if [ -n "$JWT_SECRET_PREVIOUS" ]; then
-            printf "%s" "$JWT_SECRET_PREVIOUS" | bunx wrangler secret put JWT_SECRET_PREVIOUS --cwd .
+          set -euo pipefail
+          if [ -z "${JWT_SECRET:-}" ]; then
+            echo "Missing GitHub secret: JWT_SECRET" >&2
+            exit 1
           fi
+          printf "%s" "$JWT_SECRET" | bunx wrangler secret put JWT_SECRET --cwd .
 
       - name: Ensure resources
         env:

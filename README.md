@@ -68,8 +68,7 @@ bun install --cwd apps/web --backend=copyfile
 在仓库根目录创建 `.dev.vars`：
 
 ```ini
-JWT_SECRET_CURRENT=dev-secret
-JWT_SECRET_PREVIOUS=
+JWT_SECRET=dev-secret
 WS_MAX_CONNECTIONS=3
 TURNSTILE_MODE=off
 TURNSTILE_SITE_KEY=
@@ -146,12 +145,11 @@ database_id = "REPLACE_ME"
 ### 配置 Secrets
 
 ```bash
-bunx wrangler secret put JWT_SECRET_CURRENT
-bunx wrangler secret put JWT_SECRET_PREVIOUS
+bunx wrangler secret put JWT_SECRET
 bunx wrangler secret put TURNSTILE_SECRET
 ```
 
-`JWT_SECRET_CURRENT` 必须配置；`JWT_SECRET_PREVIOUS` 用于密钥轮换；`TURNSTILE_SECRET` 仅在启用 Turnstile 时需要。
+`JWT_SECRET` 必须配置；`TURNSTILE_SECRET` 仅在启用 Turnstile 时需要。
 
 ### 迁移和部署
 
@@ -176,8 +174,7 @@ bun run deploy:worker
 2. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 添加：
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
-   - `JWT_SECRET_CURRENT`
-   - `JWT_SECRET_PREVIOUS`（可选）
+   - `JWT_SECRET`
 3. 进入 GitHub Actions 手动运行 `Deploy Worker`（或推送到 `main` / `beta` 分支触发）。
 4. 部署完成后，按 [docs/deploy-checklist.md](./docs/deploy-checklist.md) 完成资源与 Email Routing 配置，然后访问 Worker 域名或自定义域名，按页面引导完成初始化。
 
@@ -185,14 +182,12 @@ bun run deploy:worker
 
 Cloudflare Secrets：
 
-- `JWT_SECRET_CURRENT`：JWT 签名密钥，必须。
-- `JWT_SECRET_PREVIOUS`：旧 JWT 密钥，可选。
+- `JWT_SECRET`：JWT 签名密钥，必须。
 - `TURNSTILE_SECRET`：Turnstile 服务端密钥，可选。
 
 `.dev.vars` 本地变量：
 
-- `JWT_SECRET_CURRENT`
-- `JWT_SECRET_PREVIOUS`
+- `JWT_SECRET`
 - `TURNSTILE_MODE`：`off | always | on_failure`
 - `TURNSTILE_SITE_KEY`
 - `TURNSTILE_SECRET`

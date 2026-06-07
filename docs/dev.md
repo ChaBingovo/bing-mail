@@ -32,8 +32,7 @@ bun install --cwd apps/web --backend=copyfile
 在仓库根目录创建 `.dev.vars`（不要提交）：
 
 ```ini
-JWT_SECRET_CURRENT=dev-secret
-JWT_SECRET_PREVIOUS=
+JWT_SECRET=dev-secret
 WS_MAX_CONNECTIONS=3
 TURNSTILE_MODE=off
 TURNSTILE_SITE_KEY=

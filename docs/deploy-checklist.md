@@ -9,8 +9,7 @@
 
 ## 2. Secrets（敏感）
 
-- `JWT_SECRET_CURRENT`（必须）
-- `JWT_SECRET_PREVIOUS`（可选）
+- `JWT_SECRET`（必须）
 - `TURNSTILE_SECRET`（可选）
 
 ## 3. 数据库迁移
@@ -38,4 +37,3 @@ bun run deploy:worker
 - `/api/setup/status` 返回正常
 - 登录/注册流程可用（Cookie 会话正常）
 - 收信后队列解析正常、页面红点/通知正常（WS 或轮询）
-
