@@ -72,7 +72,7 @@ function createDb(address: string) {
 
 test("/api/user/ws unauthorized without token", async () => {
   const req = new Request("https://local/api/user/ws", { headers: { upgrade: "websocket" } });
-  const env = { JWT_SECRET_CURRENT: "secret" } as any;
+  const env = { JWT_SECRET: "secret" } as any;
   const res = await handleUserRoutes(req, env, new URL(req.url), "/api/user/ws");
   expect(res?.status).toBe(401);
 });
@@ -95,7 +95,7 @@ test("/api/user/ws upgrade, ping/pong, connection limit, notify fanout", async (
   };
 
   const env = {
-    JWT_SECRET_CURRENT: jwtSecret,
+    JWT_SECRET: jwtSecret,
     DB: createDb("u1@example.com"),
     MAIL_EVENTS: namespace,
   } as any;

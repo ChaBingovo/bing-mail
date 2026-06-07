@@ -97,7 +97,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .run();
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-    const secret = S.getJwtSecretCurrent(env);
+    const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
     const secure = url.protocol === "https:";
@@ -160,7 +160,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .run();
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
-    const secret = S.getJwtSecretCurrent(env);
+    const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: id, username, isAdmin: false, exp }, secret);
     const secure = url.protocol === "https:";
@@ -218,7 +218,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const isAdmin = Boolean(user.is_admin);
-    const secret = S.getJwtSecretCurrent(env);
+    const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
     const token = await signJwt({ sub: user.id, username, isAdmin, exp }, secret);
     await Promise.all(keys.map((k) => S.authRateReset(env, k)));

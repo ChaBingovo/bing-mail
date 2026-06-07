@@ -16,8 +16,6 @@ export type Env = {
   PARSE_QUEUE_MAX_ATTEMPTS?: string;
   PARSE_QUEUE_LOCK_TTL_MS?: string;
   JWT_SECRET: string;
-  JWT_SECRET_CURRENT?: string;
-  JWT_SECRET_PREVIOUS?: string;
   TURNSTILE_MODE?: string;
   TURNSTILE_SECRET?: string;
   TURNSTILE_SITE_KEY?: string;
