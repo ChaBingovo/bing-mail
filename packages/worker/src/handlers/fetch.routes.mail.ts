@@ -106,6 +106,54 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     );
   }
 
+  if (pathname === "/api/media/proxy" && request.method === "GET") {
+    const auth = await S.requireAuth(request, env);
+    if (!auth) return text("", { status: 401 });
+    const raw = (url.searchParams.get("url") || "").trim();
+    if (!raw) return text("", { status: 400 });
+    let target: URL;
+    try {
+      target = new URL(raw);
+    } catch {
+      return text("", { status: 400 });
+    }
+    if (target.protocol !== "https:" && target.protocol !== "http:") return text("", { status: 400 });
+
+    const res = await fetch(target.toString(), {
+      redirect: "follow",
+      headers: {
+        "user-agent": "bingmail/1.0",
+        "accept": "image/*",
+      },
+    });
+    if (!res.ok) return text("", { status: 404 });
+
+    const ctRaw = (res.headers.get("content-type") || "").toLowerCase();
+    const ext = (target.pathname.split(".").pop() || "").toLowerCase();
+    const guessed =
+      ext === "webp"
+        ? "image/webp"
+        : ext === "png"
+          ? "image/png"
+          : ext === "jpg" || ext === "jpeg"
+            ? "image/jpeg"
+            : ext === "gif"
+              ? "image/gif"
+              : ext === "svg"
+                ? "image/svg+xml"
+                : "";
+    const ct = ctRaw.startsWith("image/") ? ctRaw : guessed || ctRaw;
+    if (!ct.startsWith("image/")) return text("", { status: 415 });
+    const len = Number(res.headers.get("content-length") || "0") || 0;
+    if (len > 10 * 1024 * 1024) return text("", { status: 413 });
+
+    const headers = new Headers();
+    headers.set("content-type", ct || "image/*");
+    headers.set("cache-control", "private, max-age=3600");
+    headers.set("x-content-type-options", "nosniff");
+    return new Response(res.body, { status: 200, headers });
+  }
+
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
   if (msgMetaMatch && request.method === "GET") {
     const authRes = await S.requireAuthOr401(request, env);

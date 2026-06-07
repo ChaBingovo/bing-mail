@@ -56,6 +56,11 @@ pre{white-space:pre-wrap;word-break:break-word}
         a.setAttribute("rel", "noreferrer noopener");
       });
       tpl.content.querySelectorAll("img").forEach((img) => {
+        const src = (img.getAttribute("src") || "").trim();
+        const lower = src.toLowerCase();
+        if (lower.startsWith("https://") || lower.startsWith("http://")) {
+          img.setAttribute("src", `/api/media/proxy?url=${encodeURIComponent(src)}`);
+        }
         img.setAttribute("loading", "lazy");
         img.setAttribute("referrerpolicy", "no-referrer");
       });

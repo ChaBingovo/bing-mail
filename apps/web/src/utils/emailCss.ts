@@ -18,13 +18,21 @@ function isAllowedCssUrl(url: string) {
   return false;
 }
 
+function toProxyUrl(url: string) {
+  const u = url.trim();
+  const lower = u.toLowerCase();
+  if (lower.startsWith("https://") || lower.startsWith("http://")) return `/api/media/proxy?url=${encodeURIComponent(u)}`;
+  return u;
+}
+
 export function sanitizeCssUrls(input: string) {
   const s = input || "";
   return s.replace(/url\s*\(\s*([^)]+)\s*\)/gi, (_m, raw) => {
     const cleaned = cleanUrlToken(String(raw || ""));
     if (!cleaned) return "url(\"\")";
     if (!isAllowedCssUrl(cleaned)) return "url(\"\")";
-    const escaped = cleaned.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "").replaceAll("\r", "");
+    const proxied = toProxyUrl(cleaned);
+    const escaped = proxied.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "").replaceAll("\r", "");
     return `url("${escaped}")`;
   });
 }
@@ -49,4 +57,3 @@ export function filterInlineStyle(input: string) {
   v = v.replace(/behavior\s*:/gi, "");
   return v;
 }
-

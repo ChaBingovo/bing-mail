@@ -4,7 +4,7 @@ import { filterEmailCss, filterInlineStyle } from "../src/utils/emailCss";
 test("filterEmailCss keeps https background-image url", () => {
   const css = "div{background-image:url(' `https://esa-img.loliapi.cn/i/pe/img782.webp` ')}";
   const out = filterEmailCss(css);
-  expect(out).toContain('url("https://esa-img.loliapi.cn/i/pe/img782.webp")');
+  expect(out).toContain('/api/media/proxy?url=');
 });
 
 test("filterEmailCss strips javascript url", () => {
@@ -16,6 +16,5 @@ test("filterEmailCss strips javascript url", () => {
 test("filterInlineStyle keeps https url", () => {
   const s = "background-image:url(https://example.com/a.png)";
   const out = filterInlineStyle(s);
-  expect(out).toContain('url("https://example.com/a.png")');
+  expect(out).toContain('/api/media/proxy?url=');
 });
-
