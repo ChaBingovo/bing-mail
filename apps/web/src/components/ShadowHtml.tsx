@@ -1,26 +1,6 @@
 import DOMPurify from "dompurify";
 import { createEffect } from "solid-js";
-
-function filterEmailCss(input: string) {
-  let css = input || "";
-  css = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  css = css.replace(/@import[^;]*;/gi, "");
-  css = css.replace(/url\s*\(\s*[^)]+\s*\)/gi, "");
-  css = css.replace(/expression\s*\(/gi, "");
-  css = css.replace(/-moz-binding\s*:/gi, "");
-  css = css.replace(/behavior\s*:/gi, "");
-  css = css.replace(/(^|[,{]\s*)(html|body)\b/gi, "$1:host");
-  return css.trim();
-}
-
-function filterInlineStyle(input: string) {
-  let v = input || "";
-  v = v.replace(/url\s*\(\s*[^)]+\s*\)/gi, "");
-  v = v.replace(/expression\s*\(/gi, "");
-  v = v.replace(/-moz-binding\s*:/gi, "");
-  v = v.replace(/behavior\s*:/gi, "");
-  return v;
-}
+import { filterEmailCss, filterInlineStyle } from "../utils/emailCss";
 
 function extractHtmlAndCss(raw: string) {
   try {
