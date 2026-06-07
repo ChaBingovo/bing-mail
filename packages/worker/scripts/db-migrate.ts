@@ -1,9 +1,10 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DB_NAME = "bingmail";
 const MIGRATIONS_TABLE = "__bingmail_migrations";
-const PROJECT_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const IS_REMOTE = process.argv.includes("--remote") && !process.argv.includes("--local");
 const EXEC_MODE_ARGS = IS_REMOTE ? ["--remote"] : ["--local"];
 
@@ -61,14 +62,14 @@ async function main() {
   const appliedRes = await execJson(`SELECT filename FROM ${MIGRATIONS_TABLE} ORDER BY filename ASC;`);
   const applied = new Set(
     (appliedRes?.[0]?.results || [])
-      .map((r) => r.filename)
+      .map((r) => (typeof r["filename"] === "string" ? r["filename"] : null))
       .filter((v): v is string => typeof v === "string"),
   );
 
   const migrationsDir = path.resolve(process.cwd(), "../db/migrations");
   const files = (await readdir(migrationsDir))
-    .filter((f) => f.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b));
+    .filter((f: string) => f.endsWith(".sql"))
+    .sort((a: string, b: string) => a.localeCompare(b));
 
   for (const file of files) {
     if (applied.has(file)) continue;
