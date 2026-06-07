@@ -335,7 +335,7 @@ export async function requireMailboxAccess(env: Env, auth: { sub: string; isAdmi
 
 export async function requireMessageAccess(env: Env, auth: { sub: string; isAdmin?: boolean }, messageId: string) {
   const row = await env.DB.prepare(
-    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
+    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.text_plain, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
   )
     .bind(messageId)
     .first<{

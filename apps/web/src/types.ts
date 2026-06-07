@@ -19,6 +19,7 @@ export type MessageDetail = {
   snippet: string | null;
   receivedAt: number;
   parsedAt: number | null;
+  hasText: boolean;
   hasHtml: boolean;
   aiCode: string | null;
   aiService: string | null;

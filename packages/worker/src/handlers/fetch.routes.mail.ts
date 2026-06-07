@@ -126,9 +126,26 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         snippet: row.snippet,
         receivedAt: row.received_at,
         parsedAt: row.parsed_at,
+        hasText: Boolean(row.text_plain),
         hasHtml: Boolean(row.html_inline || row.html_r2_key),
         aiCode: row.ai_code ?? null,
         aiService: row.ai_service ?? null,
+      },
+    });
+  }
+
+  const msgTextMatch = pathname.match(/^\/api\/messages\/([^/]+)\/text$/);
+  if (msgTextMatch && request.method === "GET") {
+    const auth = await S.requireAuth(request, env);
+    if (!auth) return text("", { status: 401 });
+    const id = decodeURIComponent(msgTextMatch[1]);
+    const row = await S.requireMessageAccess(env, auth, id);
+    if (!row) return text("", { status: 404 });
+    if (!row.text_plain) return text("", { status: 204 });
+    return new Response(row.text_plain, {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-type-options": "nosniff",
       },
     });
   }
@@ -144,10 +161,8 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     if (row.html_inline) {
       return new Response(row.html_inline, {
         headers: {
-          "content-type": "text/html; charset=utf-8",
-          "access-control-allow-origin": "*",
-          "access-control-allow-headers": "*",
-          "access-control-allow-methods": "GET,POST,OPTIONS",
+          "content-type": "text/plain; charset=utf-8",
+          "x-content-type-options": "nosniff",
         },
       });
     }
@@ -156,10 +171,8 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
       if (!obj?.body) return text("", { status: 404 });
       return new Response(obj.body, {
         headers: {
-          "content-type": "text/html; charset=utf-8",
-          "access-control-allow-origin": "*",
-          "access-control-allow-headers": "*",
-          "access-control-allow-methods": "GET,POST,OPTIONS",
+          "content-type": "text/plain; charset=utf-8",
+          "x-content-type-options": "nosniff",
         },
       });
     }

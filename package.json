@@ -12,7 +12,7 @@
     "deploy:worker": "bun --cwd packages/worker deploy",
     "dev:web": "bun --cwd apps/web dev",
     "build:web": "bun --cwd apps/web build",
-    "test": "bun --cwd packages/worker test",
+    "test": "bun --cwd packages/worker test && bun --cwd apps/web test",
     "check": "bun run typecheck && bun run test && bun run build:web",
     "typecheck": "bun --cwd packages/worker typecheck && bun --cwd apps/web typecheck",
     "db:generate": "drizzle-kit generate",

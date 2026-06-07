@@ -218,7 +218,7 @@ function ConsoleView() {
               setSelectedId={(id) => app.setSelectedId(id)}
             />
 
-            <EmailViewer detail={session.detail() || null} html={session.html() || ""} />
+            <EmailViewer detail={session.detail() || null} html={session.html() || ""} text={session.text() || ""} />
           </div>
         </Show>
       </div>

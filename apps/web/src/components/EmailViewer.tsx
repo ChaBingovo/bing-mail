@@ -1,10 +1,11 @@
 import { Show } from "solid-js";
 import type { MessageDetail } from "../types";
 import { formatTime } from "../utils/format";
+import { looksLikeMarkdown, markdownToEmailHtml } from "../utils/markdownEmail";
 import { ShadowHtml } from "./ShadowHtml";
 import { AiCodeCard } from "./AiCodeCard";
 
-export function EmailViewer(props: { detail: MessageDetail | null; html: string }) {
+export function EmailViewer(props: { detail: MessageDetail | null; html: string; text: string }) {
   return (
     <main class="h-full bg-white/0 p-4">
       <Show when={props.detail} fallback={<div class="text-sm text-zinc-500">选择一封邮件查看详情</div>}>
@@ -30,12 +31,28 @@ export function EmailViewer(props: { detail: MessageDetail | null; html: string 
               <Show
                 when={d().hasHtml && props.html}
                 fallback={
-                  <div class="whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-zinc-200">
-                    {d().snippet || ""}
-                  </div>
+                  <Show
+                    when={d().hasText && props.text}
+                    fallback={
+                      <div class="whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-zinc-200">
+                        {d().snippet || ""}
+                      </div>
+                    }
+                  >
+                    <Show
+                      when={looksLikeMarkdown(props.text)}
+                      fallback={
+                        <div class="whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-zinc-200">
+                          {props.text}
+                        </div>
+                      }
+                    >
+                      <ShadowHtml html={markdownToEmailHtml(props.text)} debugId={d().id} />
+                    </Show>
+                  </Show>
                 }
               >
-                <ShadowHtml html={props.html || ""} />
+                <ShadowHtml html={props.html || ""} debugId={d().id} />
               </Show>
             </Show>
           </div>

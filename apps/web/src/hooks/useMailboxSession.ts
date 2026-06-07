@@ -65,6 +65,11 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     return app.api.apiText(`/api/messages/${encodeURIComponent(id)}/html`);
   });
 
+  const [text] = createResource(selectedId, async (id) => {
+    if (!id || app.page() !== "inbox") return "";
+    return app.api.apiText(`/api/messages/${encodeURIComponent(id)}/text`);
+  });
+
   createEffect(() => {
     if (app.page() !== "inbox") return;
     const addr = activeOwnedAddress();
@@ -84,6 +89,7 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     selectedId,
     detail,
     html,
+    text,
     displayAddress,
     setDisplayAddress,
     activeOwnedAddress,
