@@ -41,8 +41,8 @@ export function ShadowHtml(props: { html: string; debugId?: string }) {
     });
 
     const baseCss = `
-:host{display:block;color:rgb(228 228 231);background:transparent}
-img,video{max-width:100%;height:auto}
+:host{display:block;color:rgb(228 228 231);background:transparent;background-position:center;background-repeat:no-repeat;background-size:contain}
+img,video{max-width:100%;height:auto;display:block;margin-left:auto;margin-right:auto;object-fit:contain;object-position:center}
 table{max-width:100%;border-collapse:collapse}
 pre{white-space:pre-wrap;word-break:break-word}
 *{max-width:100%}
