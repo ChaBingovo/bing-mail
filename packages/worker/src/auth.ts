@@ -103,7 +103,7 @@ export function getBearerToken(request: Request) {
 
 export async function hashPassword(password: string) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iterations = 210000;
+  const iterations = 100000;
 
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
@@ -123,6 +123,7 @@ export async function verifyPassword(password: string, stored: string) {
   if (alg !== "pbkdf2") return false;
   const iterations = Number(iterRaw);
   if (!Number.isFinite(iterations) || iterations < 10000) return false;
+  if (iterations > 100000) return false;
 
   const salt = base64UrlDecodeToBytes(saltB64);
   const expected = base64UrlDecodeToBytes(hashB64);
