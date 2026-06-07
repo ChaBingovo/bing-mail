@@ -73,8 +73,7 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
         if (typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 && typeof FixedLengthStreamCtor === "function") {
           const fls = new FixedLengthStreamCtor(rawSize);
           const piping = message.raw.pipeTo(fls.writable);
-          await env.MAIL_BUCKET.put(rawKey, fls.readable, meta);
-          await piping;
+          await Promise.all([piping, env.MAIL_BUCKET.put(rawKey, fls.readable, meta)]);
         } else {
           const buf = await new Response(message.raw).arrayBuffer();
           await env.MAIL_BUCKET.put(rawKey, buf, meta);
