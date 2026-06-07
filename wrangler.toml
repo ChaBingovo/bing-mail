@@ -5,6 +5,10 @@ compatibility_date = "2026-05-25"
 [build]
 command = "bun ./scripts/build-web.ts"
 
+[observability.logs]
+enabled = true
+invocation_logs = true
+
 [assets]
 directory = "apps/web/dist"
 binding = "ASSETS"
