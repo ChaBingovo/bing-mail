@@ -83,11 +83,10 @@ export function createMailSyncController(params: {
     }
   };
 
-  const wsUrlFor = (token: string | null) => {
+  const wsUrlFor = () => {
     const protocol = typeof location !== "undefined" && location.protocol === "https:" ? "wss" : "ws";
     const host = typeof location !== "undefined" ? location.host : "";
-    const t = (token || "").trim();
-    return t ? `${protocol}://${host}/api/user/ws?token=${encodeURIComponent(t)}` : `${protocol}://${host}/api/user/ws`;
+    return `${protocol}://${host}/api/user/ws`;
   };
 
   const noteWsFailure = () => {
@@ -116,8 +115,7 @@ export function createMailSyncController(params: {
     if (Date.now() < wsNextAttemptAt) return;
 
     try {
-      const token = params.getToken ? params.getToken() : null;
-      ws = new WebSocket(wsUrlFor(token));
+      ws = new WebSocket(wsUrlFor());
     } catch {
       noteWsFailure();
       schedule(baseInterval() + pollBackoffMs);
