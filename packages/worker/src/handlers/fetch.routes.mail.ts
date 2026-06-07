@@ -161,8 +161,12 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     if (row.html_inline) {
       return new Response(row.html_inline, {
         headers: {
-          "content-type": "text/plain; charset=utf-8",
+          "content-type": "text/html; charset=utf-8",
           "x-content-type-options": "nosniff",
+          "content-security-policy": "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src https: http: data:; style-src 'unsafe-inline'",
+          "access-control-allow-origin": "*",
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET,POST,OPTIONS",
         },
       });
     }
@@ -171,8 +175,12 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
       if (!obj?.body) return text("", { status: 404 });
       return new Response(obj.body, {
         headers: {
-          "content-type": "text/plain; charset=utf-8",
+          "content-type": "text/html; charset=utf-8",
           "x-content-type-options": "nosniff",
+          "content-security-policy": "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src https: http: data:; style-src 'unsafe-inline'",
+          "access-control-allow-origin": "*",
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET,POST,OPTIONS",
         },
       });
     }
