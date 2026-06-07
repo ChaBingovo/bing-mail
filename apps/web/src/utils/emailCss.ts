@@ -45,7 +45,7 @@ export function filterEmailCss(input: string) {
   css = css.replace(/expression\s*\(/gi, "");
   css = css.replace(/-moz-binding\s*:/gi, "");
   css = css.replace(/behavior\s*:/gi, "");
-  css = css.replace(/(^|[,{]\s*)(html|body)\b/gi, "$1:host");
+  css = css.replace(/(^|[\s,{])\s*(html|body)\b/gi, "$1:host");
   return css.trim();
 }
 
