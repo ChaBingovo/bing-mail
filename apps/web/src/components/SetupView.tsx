@@ -3,7 +3,7 @@ import type { AuthUser } from "../types";
 import { DropdownSelect } from "./DropdownSelect";
 
 export function SetupView(props: {
-  onInitialized: (user: AuthUser, token: string) => void;
+  onInitialized: (user: AuthUser) => void;
 }) {
   const [step, setStep] = createSignal<1 | 2 | 3>(1);
   const [username, setUsername] = createSignal("");
@@ -55,8 +55,8 @@ export function SetupView(props: {
         } catch {}
         throw new Error(msg);
       }
-      const data = (await res.json()) as { user: AuthUser; token: string };
-      props.onInitialized(data.user, data.token);
+      const data = (await res.json()) as { user: AuthUser };
+      props.onInitialized(data.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "初始化失败");
     } finally {

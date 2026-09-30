@@ -7,7 +7,8 @@ export type MailSyncController = {
 };
 
 export function createMailSyncController(params: {
-  getToken?: () => string | null;
+  /** Changes when the session changes (for example a different user logs in). */
+  getSessionKey?: () => string;
   getAddress: () => string;
   getIsVisible: () => boolean;
   apiJson: <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -184,8 +185,8 @@ export function createMailSyncController(params: {
       return;
     }
 
-    const token = params.getToken ? params.getToken() : null;
-    resetForKey(`${address}|${token || ""}`);
+    const sessionKey = params.getSessionKey ? params.getSessionKey() : "";
+    resetForKey(`${address}|${sessionKey}`);
 
     if (!params.getIsVisible()) {
       closeWs();
@@ -203,8 +204,8 @@ export function createMailSyncController(params: {
     if (!address) return;
     if (stopped) {
       stopped = false;
-      const token = params.getToken ? params.getToken() : null;
-      resetForKey(`${address}|${token || ""}`);
+      const sessionKey = params.getSessionKey ? params.getSessionKey() : "";
+      resetForKey(`${address}|${sessionKey}`);
       return;
     }
     schedule(50);

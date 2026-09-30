@@ -54,12 +54,12 @@ function GuestView() {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: AuthUser; token?: string }>("/api/auth/login", {
+      const data = await app.api.apiJson<{ user: AuthUser }>("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
-      app.login(data.user, data.token);
+      app.login(data.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {
@@ -71,12 +71,12 @@ function GuestView() {
     setLoading(true);
     setError("");
     try {
-      const data = await app.api.apiJson<{ user: AuthUser; token?: string }>("/api/auth/register", {
+      const data = await app.api.apiJson<{ user: AuthUser }>("/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password, mailboxLocal, domain }),
       });
-      app.login(data.user, data.token);
+      app.login(data.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
     } finally {
@@ -112,7 +112,7 @@ function GuestView() {
         </div>
       }
     >
-      <SetupView onInitialized={(user, token) => app.login(user, token)} />
+      <SetupView onInitialized={(user) => app.login(user)} />
     </Show>
   );
 }
@@ -129,6 +129,7 @@ function ConsoleView() {
   });
 
   const sync = createMailSyncController({
+    getSessionKey: () => app.currentUser()?.id || "",
     getAddress: () => (session.mailboxAddress() || "").trim().toLowerCase(),
     getIsVisible: isVisible,
     apiJson: app.api.apiJson,
@@ -212,10 +213,14 @@ function ConsoleView() {
 
             <EmailList
               mailboxAddress={session.displayAddress() || session.activeOwnedAddress()}
-              messages={session.messages() || []}
-              loading={session.messages.state !== "ready"}
+              messages={session.messages()}
+              loading={session.messagesLoading()}
               selectedId={session.selectedId()}
               setSelectedId={(id) => app.setSelectedId(id)}
+              hasMore={session.hasMore()}
+              loadingMore={session.loadingMore()}
+              loadMoreError={session.loadMoreError()}
+              onLoadMore={() => void session.loadMoreMessages()}
             />
 
             <EmailViewer detail={session.detail() || null} html={session.html() || ""} text={session.text() || ""} />

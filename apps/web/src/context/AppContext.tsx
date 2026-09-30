@@ -12,7 +12,6 @@ export type AppContextValue = {
   setMode: (v: AppMode) => void;
   page: () => AppPage;
   setPage: (v: AppPage) => void;
-  token: () => string | null;
   currentUser: () => AuthUser | null;
   activeAddress: () => string;
   setActiveAddress: (v: string) => void;
@@ -20,7 +19,7 @@ export type AppContextValue = {
   setSelectedId: (v: string | null) => void;
   unseenByMailbox: () => Record<string, number>;
   setUnseen: (address: string, count: number) => void;
-  login: (user: AuthUser, token?: string | null) => void;
+  login: (user: AuthUser) => void;
   logout: () => void;
   toGuest: () => void;
   api: ReturnType<typeof createApiClient>;
@@ -32,7 +31,6 @@ const PAGE_KEY = "bingmail.page";
 const Ctx = createContext<AppContextValue>();
 
 export function AppProvider(props: { children: any }) {
-  const [token, setToken] = createSignal<string | null>(null);
   const [currentUser, setCurrentUser] = createSignal<AuthUser | null>(getJson<AuthUser>(USER_KEY));
   const initialMode = ((): AppMode => {
     if (currentUser()) return "user";
@@ -62,14 +60,13 @@ export function AppProvider(props: { children: any }) {
 
   const toGuest = () => {
     removeKey(USER_KEY);
-    setToken(null);
     setCurrentUser(null);
     setMode("guest");
     setString(pageKey(), "inbox");
     _setPage("inbox");
   };
 
-  const api = createApiClient(() => token(), toGuest);
+  const api = createApiClient(toGuest);
 
   let sessionCheckedForUserId = "";
   createEffect(() => {
@@ -109,10 +106,9 @@ export function AppProvider(props: { children: any }) {
     setString(pageKey(), v);
   };
 
-  const login = (user: AuthUser, tokenValue?: string | null) => {
+  const login = (user: AuthUser) => {
     setJson(USER_KEY, user);
     setCurrentUser(user);
-    setToken(tokenValue || null);
     setMode("user");
     setPage("inbox");
   };
@@ -127,7 +123,6 @@ export function AppProvider(props: { children: any }) {
     setMode,
     page,
     setPage,
-    token,
     currentUser,
     activeAddress,
     setActiveAddress,

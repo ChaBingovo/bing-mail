@@ -3,11 +3,13 @@ export type ApiClient = {
   apiText(path: string, init?: RequestInit): Promise<string>;
 };
 
-export function createApiClient(getToken: () => string | null, onUnauthorized: () => void): ApiClient {
+/**
+ * The session is an HttpOnly, SameSite=Lax cookie. Requests are same-origin, so the
+ * browser attaches it automatically and the client never handles a credential.
+ */
+export function createApiClient(onUnauthorized: () => void): ApiClient {
   async function apiFetch(path: string, init?: RequestInit) {
     const headers = new Headers(init?.headers);
-    const token = getToken();
-    if (token) headers.set("authorization", `Bearer ${token}`);
     const res = await fetch(path, { ...init, headers });
     if (res.status === 401) onUnauthorized();
     return res;
