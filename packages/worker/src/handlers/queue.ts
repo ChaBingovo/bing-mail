@@ -37,7 +37,59 @@ function extractJsonObject(value: string) {
   return value.slice(first, last + 1);
 }
 
+/** Exported so tests can assert the exact guard conditions. */
+export const SWEEP_SQL =
+  "UPDATE messages SET status='FAILED', error_reason='abandoned: 解析中断或重试次数耗尽', parsed_at=NULL, lock_id=NULL, locked_at=NULL " +
+  "WHERE status='PENDING' AND ((lock_id IS NOT NULL AND locked_at < ?1) OR (attempt >= ?2 AND received_at < ?3))";
+
+/**
+ * Marks rows FAILED when they can no longer make progress:
+ *
+ * - PENDING with a lock that expired long ago: the consumer holding the lock never
+ *   came back (process killed, workerd restart, crashed isolate). The claim query
+ *   would recover these, but only if another delivery arrives before the retry
+ *   budget runs out — which is exactly what does not happen once the queue stops
+ *   delivering.
+ * - PENDING with attempt >= max: the claim guard refuses them forever, so without
+ *   an external sweep they are unreachable (this is how the first zombie row in
+ *   local testing got stuck).
+ *
+ * Only rows older than the lock TTL are touched, so a parse that is genuinely in
+ * flight is never interrupted. The UPDATE is atomic and status-guarded, so
+ * concurrent consumers cannot double-reap or fight over in-flight rows.
+ */
+async function reapAbandonedMessages(env: Env) {
+  const rawMaxAttempts = Number(env.PARSE_QUEUE_MAX_ATTEMPTS || "5");
+  const maxAttempts =
+    Number.isFinite(rawMaxAttempts) && rawMaxAttempts > 0 ? Math.floor(rawMaxAttempts) : 5;
+  const rawLockTtlMs = Number(env.PARSE_QUEUE_LOCK_TTL_MS || "300000");
+  const lockTtlMs =
+    Number.isFinite(rawLockTtlMs) && rawLockTtlMs > 0 ? Math.floor(rawLockTtlMs) : 300000;
+
+  const now = Date.now();
+  /** Past this instant a held lock is considered abandoned. */
+  const lockCutoff = now - lockTtlMs;
+  /** Retry-exhausted rows must be older still, to avoid touching an in-flight row. */
+  const attemptCutoff = now - lockTtlMs * 6;
+
+  const result = await env.DB.prepare(SWEEP_SQL).bind(lockCutoff, maxAttempts, attemptCutoff).run();
+
+  const reaped = result.meta?.changes ?? 0;
+  if (reaped > 0) {
+    logWarn({ event: "queue_abandoned_messages_reaped", attempt: maxAttempts, status: "FAILED" });
+  }
+  return reaped;
+}
+
 export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: Env, _ctx: ExecutionContext) {
+  // Opportunistic cleanup: a stopped consumer (or an exhausted retry budget) should
+  // surface as FAILED in the UI instead of an endless "解析中".
+  try {
+    await reapAbandonedMessages(env);
+  } catch {
+    // never let cleanup break real parsing
+  }
+
   await Promise.allSettled(
     batch.messages.map(async (msg) => {
       const requestId = crypto.randomUUID();
