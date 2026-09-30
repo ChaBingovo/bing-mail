@@ -101,9 +101,30 @@ export function getBearerToken(request: Request) {
   return m[1].trim();
 }
 
-export async function hashPassword(password: string) {
+/**
+ * Password hashing parameters. Single source of truth for the whole repo:
+ * `scripts/hash-password.ts` hashes with `HASH_ITERATIONS`, and any hash stored
+ * in `packages/db/seeds/*.sql` must fall inside `[MIN_ITERATIONS, MAX_ITERATIONS]`
+ * or it can never be verified.
+ */
+export const HASH_ITERATIONS = 100000;
+export const MIN_ITERATIONS = 10000;
+export const MAX_ITERATIONS = 1000000;
+
+/** Stored format: `pbkdf2$<iterations>$<saltB64url>$<hashB64url>`. */
+export function parsePasswordHash(stored: string) {
+  const parts = (stored || "").split("$");
+  if (parts.length !== 4) return null;
+  const [alg, iterRaw, saltB64, hashB64] = parts;
+  if (alg !== "pbkdf2") return null;
+  if (!saltB64 || !hashB64) return null;
+  const iterations = Number(iterRaw);
+  if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS || iterations > MAX_ITERATIONS) return null;
+  return { iterations, saltB64, hashB64 };
+}
+
+export async function hashPassword(password: string, iterations: number = HASH_ITERATIONS) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iterations = 100000;
 
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
@@ -117,13 +138,9 @@ export async function hashPassword(password: string) {
 }
 
 export async function verifyPassword(password: string, stored: string) {
-  const parts = stored.split("$");
-  if (parts.length !== 4) return false;
-  const [alg, iterRaw, saltB64, hashB64] = parts;
-  if (alg !== "pbkdf2") return false;
-  const iterations = Number(iterRaw);
-  if (!Number.isFinite(iterations) || iterations < 10000) return false;
-  if (iterations > 100000) return false;
+  const parsed = parsePasswordHash(stored);
+  if (!parsed) return false;
+  const { iterations, saltB64, hashB64 } = parsed;
 
   const salt = base64UrlDecodeToBytes(saltB64);
   const expected = base64UrlDecodeToBytes(hashB64);

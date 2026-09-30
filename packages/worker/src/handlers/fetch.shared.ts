@@ -2,6 +2,26 @@ import type { Env } from "../env";
 import { json } from "../http";
 import { getBearerToken, verifyJwt, type JwtPayload } from "../auth";
 
+export function isUniqueViolation(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("UNIQUE constraint failed") || msg.includes("SQLITE_CONSTRAINT_UNIQUE");
+}
+
+/**
+ * Best-effort classification of a UNIQUE violation caused by inserting a user
+ * row. Account creation pre-checks both columns, so this only fires when two
+ * requests race; returning the right 409 is friendlier than a 500.
+ */
+export function userUniqueViolationError(err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("users.username")) return "username_taken";
+  if (msg.includes("mailboxes.address")) return "address_taken";
+  return null;
+}
+
+/** Mirrors the messages.status CHECK constraint in packages/db/migrations. */
+export type MessageStatus = "PENDING" | "SUCCESS" | "FAILED";
+
 export function isDbSchemaError(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.includes("no such table:") || msg.includes("no such column:");
@@ -193,6 +213,26 @@ export function decodeCursor(cursor: string | null) {
   return { receivedAt, id };
 }
 
+const MAX_SEARCH_QUERY_LENGTH = 200;
+
+/**
+ * FTS5 treats a lot of punctuation as query syntax, so raw user input can either
+ * throw a syntax error (500) or change the meaning of the search. Quote every
+ * token instead: special characters become literal, and multiple tokens keep
+ * their implicit AND behaviour.
+ */
+export function toFtsMatch(raw: string) {
+  const query = (raw || "").trim().slice(0, MAX_SEARCH_QUERY_LENGTH);
+  if (!query) return null;
+  const tokens = query
+    .split(/\s+/)
+    .map((t) => t.replace(/"/g, '""'))
+    .filter((t) => t.length > 0)
+    .map((t) => `"${t}"`);
+  if (tokens.length === 0) return null;
+  return tokens.join(" ");
+}
+
 export async function verifyTurnstile(secret: string, token: string, ip: string | null) {
   const form = new URLSearchParams();
   form.set("secret", secret);
@@ -277,16 +317,21 @@ export function makeEmailAddress(local: string, domain: string) {
   return `${l}@${d}`.toLowerCase();
 }
 
-export function parseSettingInt(raw: string | null, fallback: number) {
+/** `limit` = 0 is honoured: admins use it to switch a quota off entirely. */
+export function parseSettingInt(raw: string | null, fallback: number, limit = 1) {
+  // Note: Number(null) is 0 and Number("") is 0, so an unset row must be handled
+  // explicitly — otherwise the fallback would never be reached.
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   const i = Math.floor(n);
-  if (i <= 0) return fallback;
+  if (i < limit) return fallback;
   return i;
 }
 
+/** `max_aliases = 0` means "aliases disabled", so 0 must be a valid value here. */
 export async function getMaxAliases(env: Env) {
-  return parseSettingInt(await getSetting(env, "max_aliases"), 3);
+  return parseSettingInt(await getSetting(env, "max_aliases"), 3, 0);
 }
 
 export async function isInitialized(env: Env) {
