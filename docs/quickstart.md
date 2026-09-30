@@ -230,6 +230,6 @@ bun --cwd packages/worker db:reset:local   # 清空本地数据
 bun --cwd packages/worker db:seed:dev      # 演示账号 default / default1234
 ```
 
-相关文档：[dev.md](./dev.md)（环境细节）、[deploy-checklist.md](./deploy-checklist.md)（部署）、[email-rendering-checklist.md](./email-rendering-checklist.md)（邮件渲染验收）。
+相关文档：[summary.md](./summary.md)（项目现状与待办）、[dev.md](./dev.md)（环境细节）、[deploy-checklist.md](./deploy-checklist.md)（部署）、[email-rendering-checklist.md](./email-rendering-checklist.md)（邮件渲染验收）。
 
 

@@ -56,6 +56,7 @@ Bingmail 是一个部署在 Cloudflare 上的个人网页邮箱：用自己的�
 详细开发说明见 [docs/dev.md](./docs/dev.md)。
 
 启动、测试与本机常见问题排查见 [docs/quickstart.md](./docs/quickstart.md)。
+项目现状、本轮完成的工作与待实现事项见 [docs/summary.md](./docs/summary.md)。
 
 ### 安装依赖
 
