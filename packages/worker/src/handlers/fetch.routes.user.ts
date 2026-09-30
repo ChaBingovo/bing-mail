@@ -52,7 +52,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     const cur = S.decodeCursor(url.searchParams.get("cursor"));
     let res: D1Result<{
       id: string;
-      status: "PENDING" | "SUCCESS" | "FAILED";
+      status: S.MessageStatus;
       from_name: string | null;
       from_address: string | null;
       subject: string | null;

@@ -66,11 +66,25 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .first<{ id: string }>();
     if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
 
+    const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
+      .bind(mailboxAddress)
+      .first<{ id: string }>();
+    if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
+
     const id = crypto.randomUUID();
     const passwordHash = await hashPassword(password);
-    await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 1)")
-      .bind(id, username, passwordHash)
-      .run();
+    // One atomic insert: concurrent setup requests race on the UNIQUE indexes
+    // instead of on a pre-check, so the loser gets a clean 409 rather than a 500.
+    try {
+      await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 1)")
+        .bind(id, username, passwordHash)
+        .run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) {
+        return json({ error: S.userUniqueViolationError(err) || "username_taken" }, { status: 409 });
+      }
+      throw err;
+    }
 
     const now = Date.now();
     await env.DB.prepare(
@@ -87,14 +101,18 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .bind(crypto.randomUUID(), domain)
       .run();
 
-    const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
-      .bind(mailboxAddress)
-      .first<{ id: string }>();
-    if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
-    const mailboxId = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(mailboxId, id, mailboxAddress)
-      .run();
+    try {
+      await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+        .bind(crypto.randomUUID(), id, mailboxAddress)
+        .run();
+    } catch (err) {
+      // No multi-statement transactions in D1 here: drop the half-created account
+      // so a failed setup does not burn the username.
+      try {
+        await env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(id).run();
+      } catch {}
+      throw err;
+    }
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const secret = S.getJwtSecret(env);
@@ -102,8 +120,10 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);
+    // Session lives in an HttpOnly cookie only: the token is deliberately not echoed
+    // in the body, so no client JavaScript can persist it anywhere.
     return json(
-      { user: { id, username, isAdmin: true }, token },
+      { user: { id, username, isAdmin: true } },
       { status: 201, headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
     );
   }
@@ -144,20 +164,38 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .first<{ id: string }>();
     if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
 
-    const id = crypto.randomUUID();
-    const passwordHash = await hashPassword(password);
-    await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 0)")
-      .bind(id, username, passwordHash)
-      .run();
-
     const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
       .bind(mailboxAddress)
       .first<{ id: string }>();
     if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
-    const mailboxId = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(mailboxId, id, mailboxAddress)
-      .run();
+
+    const id = crypto.randomUUID();
+    const passwordHash = await hashPassword(password);
+    // One atomic insert: concurrent signups race on the UNIQUE indexes instead of
+    // on a pre-check, so the loser gets a clean 409 rather than a 500.
+    try {
+      await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, 0)")
+        .bind(id, username, passwordHash)
+        .run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) {
+        return json({ error: S.userUniqueViolationError(err) || "username_taken" }, { status: 409 });
+      }
+      throw err;
+    }
+
+    try {
+      await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+        .bind(crypto.randomUUID(), id, mailboxAddress)
+        .run();
+    } catch (err) {
+      // No multi-statement transactions in D1 here: drop the half-created account
+      // so a failed signup does not burn the username.
+      try {
+        await env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(id).run();
+      } catch {}
+      throw err;
+    }
 
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const secret = S.getJwtSecret(env);
@@ -166,7 +204,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);
     return json(
-      { user: { id, username, isAdmin: false }, token },
+      { user: { id, username, isAdmin: false } },
       { status: 201, headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
     );
   }
@@ -225,7 +263,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);
     return json(
-      { user: { id: user.id, username, isAdmin }, token },
+      { user: { id: user.id, username, isAdmin } },
       { headers: { "set-cookie": S.makeSessionCookie(token, maxAgeSec, secure) } },
     );
   }

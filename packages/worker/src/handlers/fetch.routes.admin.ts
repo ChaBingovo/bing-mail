@@ -107,10 +107,15 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const domain = S.getLowerStringField(body, "domain") || "";
-    if (!domain || !domain.includes(".")) return json({ error: "invalid_domain" }, { status: 400 });
+    const domain = S.normalizeDomain(S.getLowerStringField(body, "domain") || "");
+    if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
     const id = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
+    try {
+      await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) return json({ error: "domain_taken" }, { status: 409 });
+      throw err;
+    }
     return json({ domain: { id, domain, isActive: true } }, { status: 201 });
   }
 
@@ -169,20 +174,36 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
       .bind(username)
       .first<{ id: string }>();
     if (existing?.id) return json({ error: "username_taken" }, { status: 409 });
-    const id = crypto.randomUUID();
-    const passwordHash = await hashPassword(password);
-    await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, ?4)")
-      .bind(id, username, passwordHash, isAdmin ? 1 : 0)
-      .run();
-
     const mailboxExisting = await env.DB.prepare("SELECT id FROM mailboxes WHERE address = ?1 LIMIT 1")
       .bind(mailboxAddress)
       .first<{ id: string }>();
     if (mailboxExisting?.id) return json({ error: "mailbox_taken" }, { status: 409 });
-    const mailboxId = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(mailboxId, id, mailboxAddress)
-      .run();
+
+    const id = crypto.randomUUID();
+    const passwordHash = await hashPassword(password);
+    try {
+      await env.DB.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (?1, ?2, ?3, ?4)")
+        .bind(id, username, passwordHash, isAdmin ? 1 : 0)
+        .run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) {
+        return json({ error: S.userUniqueViolationError(err) || "username_taken" }, { status: 409 });
+      }
+      throw err;
+    }
+
+    try {
+      await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+        .bind(crypto.randomUUID(), id, mailboxAddress)
+        .run();
+    } catch (err) {
+      // D1 has no multi-statement transaction here: drop the half-created account
+      // so a failed create does not burn the username.
+      try {
+        await env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(id).run();
+      } catch {}
+      throw err;
+    }
 
     return json({ user: { id, username, isAdmin }, mailbox: { address: mailboxAddress } }, { status: 201 });
   }
@@ -245,22 +266,33 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
       .first<{ ok: 1 }>();
     if (aliasTaken?.ok) return json({ error: "address_taken" }, { status: 409 });
 
-    await env.DB.prepare("UPDATE mailboxes SET is_active = 0 WHERE user_id = ?1 AND is_active = 1").bind(userId).run();
-
     const existing = await env.DB.prepare("SELECT id, user_id FROM mailboxes WHERE address = ?1 LIMIT 1")
       .bind(address)
       .first<{ id: string; user_id: string | null }>();
     if (existing?.id) {
       if (existing.user_id && existing.user_id !== userId) return json({ error: "address_taken" }, { status: 409 });
+      await env.DB.prepare("UPDATE mailboxes SET is_active = 0 WHERE user_id = ?1 AND is_active = 1 AND id != ?2")
+        .bind(userId, existing.id)
+        .run();
       await env.DB.prepare("UPDATE mailboxes SET user_id = ?1, is_active = 1 WHERE id = ?2")
         .bind(userId, existing.id)
         .run();
       return json({ mailbox: { id: existing.id, address, userId } }, { status: 200 });
     }
 
+    // Insert first, deactivate the previous primary afterwards, so a lost race on
+    // mailboxes_user_id_active_uq leaves the user's current mailbox intact.
     const id = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
-      .bind(id, userId, address)
+    try {
+      await env.DB.prepare("INSERT INTO mailboxes (id, user_id, address, is_active) VALUES (?1, ?2, ?3, 1)")
+        .bind(id, userId, address)
+        .run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) return json({ error: "address_taken" }, { status: 409 });
+      throw err;
+    }
+    await env.DB.prepare("UPDATE mailboxes SET is_active = 0 WHERE user_id = ?1 AND is_active = 1 AND id != ?2")
+      .bind(userId, id)
       .run();
     return json({ mailbox: { id, address, userId } }, { status: 201 });
   }
