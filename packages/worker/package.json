@@ -10,7 +10,7 @@
     "@cloudflare/workers-types": "^4.20260525.0",
     "bun-types": "^1.3.14",
     "typescript": "^5.8.3",
-    "wrangler": "^4.19.0"
+    "wrangler": "4.19.0"
   },
   "scripts": {
     "dev": "bun ./scripts/wrangler-dev.ts",
@@ -19,7 +19,7 @@
     "typecheck": "bunx tsc -p tsconfig.json",
     "db:migrate": "bun ./scripts/db-migrate.ts",
     "db:migrate:remote": "bun ./scripts/db-migrate.ts --remote",
-    "db:seed:dev": "bunx wrangler d1 execute bingmail --local --yes --cwd ../.. --file ../db/seeds/dev.sql",
+    "db:seed:dev": "cmd /c bunx wrangler@4.19.0 --cwd ../.. d1 execute bingmail --local --yes --file packages/db/seeds/dev.sql",
     "db:reset:local": "bun ./scripts/db-reset-local.ts"
   }
 }

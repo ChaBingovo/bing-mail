@@ -1,0 +1,4 @@
+# Normalize line endings so the working tree does not drift from the index.
+* text=auto
+*.sh text eol=lf
+*.sql text eol=lf

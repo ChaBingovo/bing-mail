@@ -108,6 +108,12 @@ bun run db:migrate
 bun --cwd packages/worker db:seed:dev
 ```
 
+### 提交前自检
+
+```bash
+bun run check   # typecheck（worker + web）+ 测试 + 前端构建
+```
+
 ## 部署到 Cloudflare
 
 部署检查清单见 [docs/deploy-checklist.md](./docs/deploy-checklist.md)。

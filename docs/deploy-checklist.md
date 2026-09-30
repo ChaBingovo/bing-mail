@@ -2,7 +2,7 @@
 
 ## 1. 资源创建与绑定
 
-- D1：创建数据库并把 `database_id` 回填到 [wrangler.toml](file:///c:/Users/ChaBi/Desktop/Bingmail/wrangler.toml)
+- D1：创建数据库并把 `database_id` 回填到仓库根目录的 `wrangler.toml`
 - R2：创建 bucket（与 `wrangler.toml` 名称一致）
 - Queue：创建队列（与 `wrangler.toml` 名称一致）
 - Email Routing：Cloudflare 控制台启用 Email Routing，并配置转发到 Worker
@@ -33,6 +33,8 @@ bun run deploy:worker
 ```
 
 ## 6. 部署后验证
+
+- 前端 un run check 通过（typecheck + 测试 + 构建）
 
 - `/api/setup/status` 返回正常
 - 登录/注册流程可用（Cookie 会话正常）
