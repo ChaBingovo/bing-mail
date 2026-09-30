@@ -20,14 +20,24 @@ export function EmailViewer(props: { detail: MessageDetail | null; html: string;
                   <Show when={d().aiCode}>
                     <AiCodeCard code={d().aiCode || ""} service={d().aiService} size="md" />
                   </Show>
-                  <Show when={d().status !== "SUCCESS"}>
+                  <Show when={d().status === "FAILED"}>
+                    <span class="rounded-md bg-rose-500/15 px-2 py-0.5 font-medium text-rose-200">解析失败</span>
+                  </Show>
+                  <Show when={d().status === "PENDING"}>
                     <span class="rounded-md bg-amber-500/15 px-2 py-0.5 font-medium text-amber-200">解析中</span>
                   </Show>
                 </div>
               </div>
             </div>
 
-            <Show when={d().status === "SUCCESS"} fallback={<div class="text-sm text-zinc-500">等待解析完成…</div>}>
+            <Show
+              when={d().status === "SUCCESS"}
+              fallback={
+                <div class="text-sm text-zinc-500">
+                  {d().status === "FAILED" ? "解析失败：邮件格式异常或解析服务暂时不可用。" : "等待解析完成…"}
+                </div>
+              }
+            >
               <Show
                 when={d().hasHtml && props.html}
                 fallback={

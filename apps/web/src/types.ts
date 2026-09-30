@@ -1,6 +1,9 @@
+/** Mirrors the messages.status CHECK constraint in packages/db. */
+export type MessageStatus = "PENDING" | "SUCCESS" | "FAILED";
+
 export type MessageMeta = {
   id: string;
-  status?: "PENDING" | "SUCCESS";
+  status?: MessageStatus;
   fromName?: string | null;
   fromAddress?: string | null;
   subject?: string | null;
@@ -12,7 +15,7 @@ export type MessageMeta = {
 
 export type MessageDetail = {
   id: string;
-  status: "PENDING" | "SUCCESS";
+  status: MessageStatus;
   fromName: string | null;
   fromAddress: string | null;
   subject: string | null;
