@@ -1,7 +1,132 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
 import { logWarn } from "../log";
+import { assertPublicHttpUrl } from "../url-guard";
 import * as S from "./fetch.shared";
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_PROXY_REDIRECTS = 3;
+
+/** Maps the hosting extension to a content type; used only to corroborate the response. */
+function guessImageContentType(pathname: string) {
+  const ext = (pathname.split(".").pop() || "").toLowerCase();
+  if (ext === "webp") return "image/webp";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  if (ext === "avif") return "image/avif";
+  if (ext === "bmp") return "image/bmp";
+  if (ext === "svg" || ext === "svgz") return "image/svg+xml";
+  if (ext === "ico") return "image/x-icon";
+  return "";
+}
+
+function sniffImageMagic(buf: Uint8Array) {
+  const startsWith = (...bytes: number[]) =>
+    bytes.every((b, i) => buf.length > i && buf[i] === b);
+  if (startsWith(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (startsWith(0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (startsWith(0x47, 0x49, 0x46, 0x38)) return "image/gif";
+  if (startsWith(0x42, 0x4d)) return "image/bmp";
+  if (buf.length >= 12 && startsWith(0x52, 0x49, 0x46, 0x46)) {
+    const tag = String.fromCharCode(...buf.slice(8, 12));
+    if (tag === "WEBP") return "image/webp";
+    if (tag === "AVIF") return "image/avif";
+  }
+  // SVG has no magic number: only accept it after whitespace or a markup prefix.
+  const head = new TextDecoder().decode(buf.slice(0, 128)).trimStart().toLowerCase();
+  if (head.startsWith("<svg") || head.startsWith("<?xml")) return "image/svg+xml";
+  return "";
+}
+
+/**
+ * Fetches one remote image for the reader, validating every hop.
+ * Returns the response body as bytes so the whole payload fits the size cap.
+ */
+async function fetchProxiedImage(
+  startUrl: string,
+  referer: string | null,
+  requestId: string,
+): Promise<{ ok: true; bytes: Uint8Array; contentType: string } | { ok: false; status: number }> {
+  let next = startUrl;
+
+  for (let hop = 0; hop <= MAX_PROXY_REDIRECTS; hop += 1) {
+    const check = assertPublicHttpUrl(next);
+    if (!check.ok) {
+      logWarn({ event: "media_proxy_blocked_url", requestId, error: check.reason });
+      return { ok: false, status: 403 };
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(check.url, {
+        redirect: "manual",
+        headers: {
+          "user-agent": "bingmail/1.0",
+          accept: "image/*,image/webp,image/svg+xml;q=0.9,*/*;q=0.1",
+          ...(referer ? { referer } : {}),
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarn({ event: "media_proxy_fetch_failed", requestId, error: message });
+      return { ok: false, status: 503 };
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) return { ok: false, status: 502 };
+      if (hop === MAX_PROXY_REDIRECTS) return { ok: false, status: 502 };
+      next = new URL(location, check.url).toString();
+      continue;
+    }
+
+    if (!res.ok) return { ok: false, status: 404 };
+
+    const declared = Number(res.headers.get("content-length") || "0") || 0;
+    if (declared > MAX_IMAGE_BYTES) return { ok: false, status: 413 };
+
+    // Read with a hard cap: a chunked response has no content-length to trust.
+    const reader = res.body?.getReader();
+    if (!reader) return { ok: false, status: 502 };
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_IMAGE_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {}
+        return { ok: false, status: 413 };
+      }
+      chunks.push(value);
+    }
+
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const declaredType = (res.headers.get("content-type") || "").toLowerCase();
+    const cleanDeclared = declaredType.startsWith("image/") ? declaredType.split(";")[0].trim() : "";
+    const guessed = guessImageContentType(new URL(check.url).pathname);
+    const sniffed = sniffImageMagic(bytes);
+    const contentType = sniffed || cleanDeclared || guessed;
+    if (!contentType.startsWith("image/")) return { ok: false, status: 415 };
+    // An explicitly non-image content type that also lacks image magic bytes is a miss.
+    if (!sniffed && !cleanDeclared && !guessed) return { ok: false, status: 415 };
+
+    return { ok: true, bytes, contentType };
+  }
+
+  return { ok: false, status: 502 };
+}
+
 
 export async function handleMailRoutes(request: Request, env: Env, url: URL, pathname: string): Promise<Response | null> {
   const wsMailboxMatch = pathname.match(/^\/api\/ws\/mailboxes\/([^/]+)$/);
@@ -32,7 +157,7 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     const cur = S.decodeCursor(url.searchParams.get("cursor"));
     let res: D1Result<{
       id: string;
-      status: "PENDING" | "SUCCESS" | "FAILED";
+      status: S.MessageStatus;
       from_name: string | null;
       from_address: string | null;
       subject: string | null;
@@ -112,55 +237,29 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     if (!auth) return text("", { status: 401 });
     const raw = (url.searchParams.get("url") || "").trim();
     if (!raw) return text("", { status: 400 });
-    let target: URL;
-    try {
-      target = new URL(raw);
-    } catch {
-      return text("", { status: 400 });
-    }
-    if (target.protocol !== "https:" && target.protocol !== "http:") return text("", { status: 400 });
 
     const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
-    let res: Response;
-    try {
-      res = await fetch(target.toString(), {
-        redirect: "follow",
-        headers: {
-          "user-agent": "bingmail/1.0",
-          "accept": "image/*",
-        },
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logWarn({ event: "media_proxy_fetch_failed", requestId, error: message });
-      return text("", { status: 503, headers: { "x-request-id": requestId } });
+    // Reject private/loopback/Cloudflare-internal targets before any egress.
+    const initial = assertPublicHttpUrl(raw);
+    if (!initial.ok) {
+      logWarn({ event: "media_proxy_blocked_url", requestId, error: initial.reason });
+      return text("", { status: 403, headers: { "x-request-id": requestId } });
     }
-    if (!res.ok) return text("", { status: 404 });
 
-    const ctRaw = (res.headers.get("content-type") || "").toLowerCase();
-    const ext = (target.pathname.split(".").pop() || "").toLowerCase();
-    const guessed =
-      ext === "webp"
-        ? "image/webp"
-        : ext === "png"
-          ? "image/png"
-          : ext === "jpg" || ext === "jpeg"
-            ? "image/jpeg"
-            : ext === "gif"
-              ? "image/gif"
-              : ext === "svg"
-                ? "image/svg+xml"
-                : "";
-    const ct = ctRaw.startsWith("image/") ? ctRaw : guessed || ctRaw;
-    if (!ct.startsWith("image/")) return text("", { status: 415 });
-    const len = Number(res.headers.get("content-length") || "0") || 0;
-    if (len > 10 * 1024 * 1024) return text("", { status: 413 });
+    const upstreamReferer = (request.headers.get("referer") || "").trim() || null;
+    const result = await fetchProxiedImage(initial.url, upstreamReferer, requestId);
+    if (!result.ok) {
+      return text("", { status: result.status, headers: { "x-request-id": requestId } });
+    }
 
     const headers = new Headers();
-    headers.set("content-type", ct || "image/*");
+    headers.set("content-type", result.contentType);
     headers.set("cache-control", "private, max-age=3600");
     headers.set("x-content-type-options", "nosniff");
-    return new Response(res.body, { status: 200, headers });
+    headers.set("content-security-policy", "sandbox; default-src 'none'");
+    headers.set("cross-origin-resource-policy", "same-site");
+    // BufferSource: hand the runtime a plain ArrayBuffer slice.
+    return new Response(result.bytes.slice().buffer as ArrayBuffer, { status: 200, headers });
   }
 
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
