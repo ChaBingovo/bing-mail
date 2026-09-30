@@ -95,7 +95,7 @@ bun --cwd packages/worker test
 bun --cwd apps/web test
 ```
 
-本机实测参考值：`bun run check` 全绿时 worker 39 pass / web 15 pass / 前端构建成功。
+本机实测参考值：`bun run check` 全绿时 worker 47 pass / web 15 pass / 前端构建成功。
 
 ## 5. 本地数据
 
