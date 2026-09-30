@@ -38,6 +38,77 @@ function extractJsonObject(value: string) {
 }
 
 /** Exported so tests can assert the exact guard conditions. */
+/** Per-delivery attempt budget before a scheduled re-enqueue. */
+function deliveryAttempts(env: Env) {
+  const raw = Number(env.PARSE_QUEUE_MAX_ATTEMPTS || "5");
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 5;
+}
+
+function lockTtlMs(env: Env) {
+  const raw = Number(env.PARSE_QUEUE_LOCK_TTL_MS || "300000");
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 300000;
+}
+
+/**
+ * Hard ceiling on the lifetime attempt counter. Bounds the re-enqueue loop so a
+ * poison message (one that always throws) cannot spin forever: deliveryAttempts
+ * attempts per cycle, this many cycles at most (default 5 × 6 = 30 deliveries).
+ */
+function attemptCeiling(env: Env) {
+  return deliveryAttempts(env) * 6;
+}
+
+/**
+ * Called when a delivery finds a row whose attempt budget for this cycle is used
+ * up (the claim guard refuses rows at the ceiling). Instead of leaving the row
+ * dead, this starts a new cycle:
+ *
+ * - only an `ack`ed (accepted) row older than the lock TTL may restart, so an
+ *   in-flight or actively retrying row is never touched;
+ * - the row keeps its id and `r2_raw_key`, so the raw mail is re-read from R2
+ *   rather than duplicated;
+ * - `PARSE_QUEUE.send()` acts as the wake-up. If the original job is lost (queue
+ *   bug, stopped consumer), the new job re-delivers it.
+ *
+ * Returns false when the row is already SUCCESS, still locked, or has burned
+ * through `attemptCeiling` cycles — in which case the caller marks it FAILED.
+ */
+async function scheduleRetryCycle(messageId: string, env: Env, requestId: string) {
+  const ceiling = attemptCeiling(env);
+  const now = Date.now();
+
+  const res = await env.DB.prepare(
+    "UPDATE messages SET attempt = 1, status='PENDING', error_reason=NULL, lock_id=NULL, locked_at=NULL, parsed_at=NULL WHERE id = ?1 AND status = 'PENDING' AND attempt >= ?2 AND attempt < ?3 AND (lock_id IS NULL OR locked_at < ?4)",
+  )
+    .bind(messageId, deliveryAttempts(env), ceiling, now - lockTtlMs(env))
+    .run();
+
+  if ((res.meta?.changes ?? 0) === 0) return false;
+
+  logWarn({
+    event: "queue_message_requeued",
+    requestId,
+    messageId,
+    attempt: ceiling,
+    status: "PENDING",
+  });
+
+  try {
+    await env.PARSE_QUEUE.send({ messageId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError({ event: "queue_requeue_send_failed", requestId, messageId, error: message });
+    // A reset row with no job would be a zombie, so hand it back to the TTL reaper.
+    await env.DB.prepare("UPDATE messages SET attempt = ?2, locked_at = locked_at WHERE id = ?1")
+      .bind(messageId, ceiling)
+      .run()
+      .catch(() => undefined);
+    return false;
+  }
+
+  return true;
+}
+
 export const SWEEP_SQL =
   "UPDATE messages SET status='FAILED', error_reason='abandoned: 解析中断或重试次数耗尽', parsed_at=NULL, lock_id=NULL, locked_at=NULL " +
   "WHERE status='PENDING' AND ((lock_id IS NOT NULL AND locked_at < ?1) OR (attempt >= ?2 AND received_at < ?3))";
@@ -59,24 +130,19 @@ export const SWEEP_SQL =
  * concurrent consumers cannot double-reap or fight over in-flight rows.
  */
 async function reapAbandonedMessages(env: Env) {
-  const rawMaxAttempts = Number(env.PARSE_QUEUE_MAX_ATTEMPTS || "5");
-  const maxAttempts =
-    Number.isFinite(rawMaxAttempts) && rawMaxAttempts > 0 ? Math.floor(rawMaxAttempts) : 5;
-  const rawLockTtlMs = Number(env.PARSE_QUEUE_LOCK_TTL_MS || "300000");
-  const lockTtlMs =
-    Number.isFinite(rawLockTtlMs) && rawLockTtlMs > 0 ? Math.floor(rawLockTtlMs) : 300000;
-
+  const attempts = deliveryAttempts(env);
+  const ttl = lockTtlMs(env);
   const now = Date.now();
   /** Past this instant a held lock is considered abandoned. */
-  const lockCutoff = now - lockTtlMs;
-  /** Retry-exhausted rows must be older still, to avoid touching an in-flight row. */
-  const attemptCutoff = now - lockTtlMs * 6;
+  const lockCutoff = now - ttl;
+  /** Unclaimed-but-stuck rows must be older still, to avoid touching an in-flight row. */
+  const attemptCutoff = now - ttl * 6;
 
-  const result = await env.DB.prepare(SWEEP_SQL).bind(lockCutoff, maxAttempts, attemptCutoff).run();
+  const result = await env.DB.prepare(SWEEP_SQL).bind(lockCutoff, attempts, attemptCutoff).run();
 
   const reaped = result.meta?.changes ?? 0;
   if (reaped > 0) {
-    logWarn({ event: "queue_abandoned_messages_reaped", attempt: maxAttempts, status: "FAILED" });
+    logWarn({ event: "queue_abandoned_messages_reaped", attempt: attempts, status: "FAILED" });
   }
   return reaped;
 }
@@ -106,34 +172,56 @@ export async function handleQueue(batch: MessageBatch<ParseQueueMessage>, env: E
 }
 
 async function processOne(messageId: string, env: Env, requestId: string) {
-  const rawMaxAttempts = Number(env.PARSE_QUEUE_MAX_ATTEMPTS || "5");
-  const maxAttempts =
-    Number.isFinite(rawMaxAttempts) && rawMaxAttempts > 0 ? Math.floor(rawMaxAttempts) : 5;
-
-  const rawLockTtlMs = Number(env.PARSE_QUEUE_LOCK_TTL_MS || "300000");
-  const lockTtlMs =
-    Number.isFinite(rawLockTtlMs) && rawLockTtlMs > 0 ? Math.floor(rawLockTtlMs) : 300000;
+  const maxAttempts = deliveryAttempts(env);
+  const ceiling = attemptCeiling(env);
+  const ttl = lockTtlMs(env);
 
   const lockId = requestId;
   const now = Date.now();
-  const cutoff = now - lockTtlMs;
+  const cutoff = now - ttl;
 
   const claimRes = await env.DB.prepare(
     "UPDATE messages SET attempt = attempt + 1, status='PENDING', error_reason=NULL, lock_id=?3, locked_at=?4 WHERE id=?1 AND status != 'SUCCESS' AND attempt < ?2 AND (lock_id IS NULL OR locked_at < ?5)",
   )
-    .bind(messageId, maxAttempts, lockId, now, cutoff)
+    .bind(messageId, ceiling, lockId, now, cutoff)
     .run();
 
   const claimed = claimRes.meta?.changes ?? 0;
   if (claimed === 0) {
-    // The claim misses when the row is already SUCCESS / out of attempts, when
-    // another worker holds the lock, or because the ingest insert has not landed
-    // yet (the job is enqueued before the row). The last case must retry rather
-    // than ack, or the mail would vanish.
-    const exists = await env.DB.prepare("SELECT 1 AS ok FROM messages WHERE id = ?1 LIMIT 1")
+    // The claim misses when the row is already SUCCESS, when another worker holds
+    // the lock, when the ingest insert has not landed yet (the job is enqueued
+    // before the row), or when this cycle's attempt budget is used up.
+    const state = await env.DB.prepare(
+      "SELECT status, attempt, lock_id FROM messages WHERE id = ?1 LIMIT 1",
+    )
       .bind(messageId)
-      .first<{ ok: 1 }>();
-    if (!exists?.ok) throw new Error(`message row not ready: ${messageId}`);
+      .first<{ status: string; attempt: number; lock_id: string | null }>();
+    // The row does not exist yet: the ingest writes it right after enqueueing the
+    // job, so retrying is what makes the first delivery succeed.
+    if (!state) throw new Error(`message row not ready: ${messageId}`);
+
+    const used = Number(state.attempt) || 0;
+    if (state.status === "PENDING" && used >= ceiling) {
+      // Burned through every cycle: stop retrying and make it visible as FAILED.
+      const reason = `retry exhausted after ${used} attempt(s)`;
+      await env.DB.prepare(
+        "UPDATE messages SET status='FAILED', error_reason=?2, parsed_at=NULL, lock_id=NULL, locked_at=NULL WHERE id=?1 AND status='PENDING'",
+      )
+        .bind(messageId, reason)
+        .run();
+      logError({ event: "queue_message_retry_exhausted", requestId, messageId, attempt: used, error: reason });
+      return;
+    }
+
+    // Nobody holds the lock and the budget is not spent, so this delivery is the
+    // only chance to make progress: start the next cycle and let the new job take
+    // over. A held lock or an already-SUCCESS row falls through to the quiet skip
+    // below — the original delivery is still being retried by the other worker,
+    // and the TTL reaper covers the case where it silently dies.
+    if (state.status === "PENDING" && !state.lock_id) {
+      if (await scheduleRetryCycle(messageId, env, requestId)) return;
+    }
+
     logWarn({ event: "queue_claim_skipped", requestId, messageId });
     return;
   }
