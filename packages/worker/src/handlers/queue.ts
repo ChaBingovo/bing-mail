@@ -73,7 +73,18 @@ async function processOne(messageId: string, env: Env, requestId: string) {
     .run();
 
   const claimed = claimRes.meta?.changes ?? 0;
-  if (claimed === 0) return;
+  if (claimed === 0) {
+    // The claim misses when the row is already SUCCESS / out of attempts, when
+    // another worker holds the lock, or because the ingest insert has not landed
+    // yet (the job is enqueued before the row). The last case must retry rather
+    // than ack, or the mail would vanish.
+    const exists = await env.DB.prepare("SELECT 1 AS ok FROM messages WHERE id = ?1 LIMIT 1")
+      .bind(messageId)
+      .first<{ ok: 1 }>();
+    if (!exists?.ok) throw new Error(`message row not ready: ${messageId}`);
+    logWarn({ event: "queue_claim_skipped", requestId, messageId });
+    return;
+  }
 
   const row = await env.DB.prepare(
     "SELECT r2_raw_key, mailbox_id, received_at, attempt FROM messages WHERE id = ?1 AND lock_id = ?2 LIMIT 1",

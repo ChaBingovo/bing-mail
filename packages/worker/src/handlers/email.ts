@@ -78,11 +78,9 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
           const buf = await new Response(message.raw).arrayBuffer();
           await env.MAIL_BUCKET.put(rawKey, buf, meta);
         }
-        await env.DB.prepare(
-          "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
-        )
-          .bind(messageId, target.id, receivedAt, rawKey)
-          .run();
+        // Order matters: enqueue BEFORE inserting the row. The row id is the job
+        // body, so if send() fails we have written nothing and can ask the sender
+        // to retry; the previous order left a PENDING row with no job to parse it.
         await env.PARSE_QUEUE.send({ messageId });
         logInfo({
           event: "email_ingest_enqueued",
@@ -91,10 +89,28 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
           mailboxId: target.id,
           userId: target.user_id || undefined,
         });
+
+        await env.DB.prepare(
+          "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
+        )
+          .bind(messageId, target.id, receivedAt, rawKey)
+          .run();
+        logInfo({
+          event: "email_ingest_stored",
+          requestId,
+          messageId,
+          mailboxId: target.id,
+          userId: target.user_id || undefined,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logError({ event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg });
-        throw err;
+        // Nothing durable was recorded (the row is written last), so a temporary
+        // rejection is safe: the sending server will retry instead of the mail
+        // silently disappearing into a stuck PENDING row.
+        try {
+          message.setReject("Temporary failure, please retry");
+        } catch {}
       }
     })(),
   );
