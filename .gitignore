@@ -17,3 +17,5 @@ dev/
 .wrangler-xdg/
 .wrangler-tmp/
 .xdg*/
+# 看板执行产生的临时验证目录
+.dsh-verify/
