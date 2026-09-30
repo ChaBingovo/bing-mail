@@ -1,6 +1,6 @@
-import { rmSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { clearLocalState } from "./local-state";
 import { runWrangler, wranglerEnv } from "./wrangler-env";
 
 const DB_NAME = "bingmail";
@@ -31,9 +31,7 @@ if (reset.code !== 0) {
 console.log("2/3 clearing local R2 / Durable Object / cache state...");
 // The D1 tables are empty by now; these hold attachments, notification sockets and
 // login-rate counters, which are just as much "local data".
-for (const dir of ["state/v3/r2", "state/v3/do", "state/v3/cache"]) {
-  rmSync(path.resolve(PROJECT_ROOT, ".wrangler", dir), { recursive: true, force: true });
-}
+clearLocalState(PROJECT_ROOT);
 
 console.log("3/3 re-applying migrations...");
 const migrate = spawnSync(process.execPath, ["./scripts/db-migrate.ts"], {
