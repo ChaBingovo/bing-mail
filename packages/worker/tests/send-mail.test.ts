@@ -7,7 +7,9 @@ const MAILBOX = { id: "mb1", address: "me@example.test" };
 
 type DbOp = { sql: string; bindings: unknown[] };
 
-function createDb(opts: { mailbox?: { id: string; address: string } | null; alias?: boolean; sent?: unknown[] } = {}) {
+function createDb(
+  opts: { mailbox?: { id: string; address: string } | null; alias?: boolean; sent?: unknown[]; failRecord?: boolean } = {},
+) {
   const ops: DbOp[] = [];
   const db = {
     prepare(sql: string) {
@@ -28,6 +30,7 @@ function createDb(opts: { mailbox?: { id: string; address: string } | null; alia
           return null as unknown as T;
         },
         async run() {
+          if (opts.failRecord && sql.includes("'SENT'")) throw new Error("d1 unavailable");
           ops.push({ sql, bindings: stmt._bindings });
           return { success: true, meta: { changes: 1 } };
         },
@@ -43,7 +46,16 @@ function createDb(opts: { mailbox?: { id: string; address: string } | null; alia
 
 type SentCall = Record<string, unknown>;
 
-function createEnv(opts: { mailbox?: { id: string; address: string } | null; alias?: boolean; sent?: unknown[]; fail?: boolean; noBinding?: boolean } = {}) {
+function createEnv(
+  opts: {
+    mailbox?: { id: string; address: string } | null;
+    alias?: boolean;
+    sent?: unknown[];
+    fail?: boolean;
+    noBinding?: boolean;
+    failRecord?: boolean;
+  } = {},
+) {
   const { db, ops } = createDb(opts);
   const sent: SentCall[] = [];
   const env = {
@@ -172,6 +184,17 @@ test("a provider failure is recorded as FAILED and surfaces as 502", async () =>
   const insert = ops.find((op) => op.sql.includes("INSERT INTO sent_messages"));
   expect(insert?.sql).toContain("'FAILED'");
   expect(String(insert?.bindings[6])).toContain("smtp rejected");
+});
+
+test("a send that succeeded is reported as sent even if recording it fails", async () => {
+  const { env, ops, sent } = createEnv({ failRecord: true });
+  const res = await send(env, { to: "you@example.com", subject: "Hello", text: "body" });
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as any;
+  expect(body.message.status).toBe("SENT");
+  // The provider accepted the mail, so it must never be reported as failed.
+  expect(sent.length).toBe(1);
+  expect(ops.some((op) => op.sql.includes("'FAILED'"))).toBe(false);
 });
 
 test("the sent list maps database rows to the wire shape", async () => {

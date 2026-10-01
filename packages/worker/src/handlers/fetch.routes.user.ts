@@ -96,6 +96,11 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     const to = recipients.join(", ");
     const snippet = (textBody || htmlBody).replace(/\s+/g, " ").trim().slice(0, 140) || null;
     const sentAt = Date.now();
+    // Send first; the provider's result is the source of truth. If it throws the
+    // mail did not go out and we record a FAILED row. If it succeeds we must report
+    // success even when recording in D1 later fails — otherwise the user sees
+    // "发送失败" and re-sends an already-delivered message.
+    let messageId: string | null = null;
     try {
       const result = await env.EMAIL.send({
         from,
@@ -104,15 +109,7 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
         text: textBody || undefined,
         html: htmlBody || undefined,
       });
-      await env.DB.prepare(
-        "INSERT INTO sent_messages (id, mailbox_id, from_address, to_address, subject, snippet, status, sent_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'SENT', ?7)",
-      )
-        .bind(id, mailbox.id, from, to, subject || null, snippet, sentAt)
-        .run();
-      return json(
-        { message: { id, from, to: recipients, subject, status: "SENT" }, messageId: result?.messageId ?? null },
-        { status: 201 },
-      );
+      messageId = result?.messageId ?? null;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       logError({ event: "send_message_failed", requestId, error: reason });
@@ -125,6 +122,24 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
         .catch(() => undefined);
       return json({ error: "send_failed" }, { status: 502 });
     }
+
+    // Best-effort record of a successful send; a failure here must not flip the
+    // reported outcome.
+    try {
+      await env.DB.prepare(
+        "INSERT INTO sent_messages (id, mailbox_id, from_address, to_address, subject, snippet, status, sent_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'SENT', ?7)",
+      )
+        .bind(id, mailbox.id, from, to, subject || null, snippet, sentAt)
+        .run();
+    } catch (err) {
+      logError({
+        event: "send_record_failed",
+        requestId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    return json({ message: { id, from, to: recipients, subject, status: "SENT" }, messageId }, { status: 201 });
   }
 
   if (pathname === "/api/user/sent" && request.method === "GET") {
