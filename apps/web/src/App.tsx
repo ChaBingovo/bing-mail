@@ -12,7 +12,7 @@ import { NotificationIsland } from "./components/NotificationIsland";
 import { Spotlight } from "./components/Spotlight";
 import { AppProvider, useApp } from "./context/AppContext";
 import { VisibilityProvider, useVisibility } from "./context/VisibilityContext";
-import type { AuthUser } from "./types";
+import type { AuthUser, MessageMeta } from "./types";
 import { useMailboxSession } from "./hooks/useMailboxSession";
 import { useInboxNotifications } from "./hooks/useInboxNotifications";
 import { createMailSyncController } from "./services/mailSyncController";
@@ -174,6 +174,27 @@ function ConsoleView() {
     messages: () => session.messages() || [],
   });
 
+  /** Server-side FTS search for the Spotlight palette. */
+  const searchMessages = async (q: string, opts: { advanced: boolean; allMailboxes: boolean }) => {
+    const address = opts.allMailboxes
+      ? "*"
+      : (session.displayAddress() || session.mailboxAddress() || "").trim().toLowerCase();
+    if (!address) return [];
+    const params = new URLSearchParams({ address, q, limit: "20" });
+    if (opts.advanced) params.set("mode", "advanced");
+    const data = await app.api.apiJson<{ messages: MessageMeta[] }>(`/api/search?${params.toString()}`);
+    return (data.messages || []).map((m) => ({
+      key: `hit-${m.id}`,
+      title: m.subject || "(无主题)",
+      subtitle: m.fromName || m.fromAddress || "",
+      right: "服务器",
+      onPick: () => {
+        app.setPage("inbox");
+        app.setSelectedId(m.id);
+      },
+    }));
+  };
+
   const sidebar = () => (
     <Sidebar
       user={app.currentUser()!}
@@ -192,7 +213,13 @@ function ConsoleView() {
       <Show when={notifications.island()}>
         <NotificationIsland data={notifications.island()!} closing={notifications.islandClosing()} onClose={notifications.closeIsland} />
       </Show>
-      <Spotlight open={spotlightOpen()} onClose={() => setSpotlightOpen(false)} getActions={getSpotlightActions} />
+      <Spotlight
+        open={spotlightOpen()}
+        onClose={() => setSpotlightOpen(false)}
+        getActions={getSpotlightActions}
+        canSearchAllMailboxes={Boolean(app.currentUser()?.isAdmin)}
+        search={searchMessages}
+      />
 
       <div class="glass-shell h-full overflow-hidden rounded-[28px]">
         <Show

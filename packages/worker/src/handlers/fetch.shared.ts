@@ -220,10 +220,15 @@ const MAX_SEARCH_QUERY_LENGTH = 200;
  * throw a syntax error (500) or change the meaning of the search. Quote every
  * token instead: special characters become literal, and multiple tokens keep
  * their implicit AND behaviour.
+ *
+ * `advanced: true` passes the trimmed query through unchanged so power users can
+ * use FTS5 operators (`OR`, `NOT`, prefix `*`, `NEAR`). The search route still
+ * catches a syntax error and answers 400, so this cannot become a 500.
  */
-export function toFtsMatch(raw: string) {
+export function toFtsMatch(raw: string, opts: { advanced?: boolean } = {}) {
   const query = (raw || "").trim().slice(0, MAX_SEARCH_QUERY_LENGTH);
   if (!query) return null;
+  if (opts.advanced) return query;
   const tokens = query
     .split(/\s+/)
     .map((t) => t.replace(/"/g, '""'))

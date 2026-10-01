@@ -8,12 +8,27 @@ export type SpotlightAction = {
   onPick: () => void;
 };
 
-export function Spotlight(props: { open: boolean; onClose: () => void; getActions: (query: string) => SpotlightAction[] }) {
+export type SpotlightSearchOptions = { advanced: boolean; allMailboxes: boolean };
+
+export function Spotlight(props: {
+  open: boolean;
+  onClose: () => void;
+  getActions: (query: string) => SpotlightAction[];
+  /** Server-side FTS search. Omit to keep the palette purely local. */
+  search?: (query: string, opts: SpotlightSearchOptions) => Promise<SpotlightAction[]>;
+  canSearchAllMailboxes?: boolean;
+}) {
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
+  const [advancedMode, setAdvancedMode] = createSignal(false);
+  const [allMailboxes, setAllMailboxes] = createSignal(false);
+  const [hits, setHits] = createSignal<SpotlightAction[]>([]);
+  const [searching, setSearching] = createSignal(false);
+  const [searchError, setSearchError] = createSignal("");
   let inputEl: HTMLInputElement | undefined;
 
-  const actions = createMemo(() => props.getActions(query()));
+  const localActions = createMemo(() => props.getActions(query()));
+  const actions = createMemo(() => [...localActions(), ...hits()]);
 
   const close = () => {
     props.onClose();
@@ -27,10 +42,50 @@ export function Spotlight(props: { open: boolean; onClose: () => void; getAction
     close();
   };
 
+  // Debounced server search; the previous request is abandoned when the query,
+  // a toggle or the open state changes.
+  createEffect(() => {
+    if (!props.open) return;
+    const q = query().trim();
+    const advanced = advancedMode();
+    const all = allMailboxes();
+    if (!props.search || q.length < 2) {
+      setHits([]);
+      setSearchError("");
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      void props
+        .search!(q, { advanced, allMailboxes: all })
+        .then((results) => {
+          if (cancelled) return;
+          setHits(results);
+          setSearchError("");
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setHits([]);
+          setSearchError(err instanceof Error ? err.message : "搜索失败");
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 250);
+    onCleanup(() => {
+      cancelled = true;
+      clearTimeout(timer);
+    });
+  });
+
   createEffect(() => {
     if (!props.open) return;
     setQuery("");
     setActive(0);
+    setHits([]);
+    setSearchError("");
     queueMicrotask(() => inputEl?.focus());
   });
 
@@ -81,6 +136,41 @@ export function Spotlight(props: { open: boolean; onClose: () => void; getAction
             />
             <div class="text-[11px] font-semibold text-zinc-500">Esc</div>
           </div>
+
+          <Show when={props.search}>
+            <div class="mt-2 flex flex-wrap items-center gap-2 px-1">
+              <button
+                type="button"
+                class="spring-colors rounded-full px-3 py-1 text-[11px] font-semibold"
+                classList={{
+                  "bg-indigo-500/20 text-indigo-100": advancedMode(),
+                  "bg-white/5 text-zinc-400 hover:bg-white/10": !advancedMode(),
+                }}
+                onClick={() => setAdvancedMode((v) => !v)}
+              >
+                高级语法 {advancedMode() ? "开" : "关"}
+              </button>
+              <Show when={props.canSearchAllMailboxes}>
+                <button
+                  type="button"
+                  class="spring-colors rounded-full px-3 py-1 text-[11px] font-semibold"
+                  classList={{
+                    "bg-indigo-500/20 text-indigo-100": allMailboxes(),
+                    "bg-white/5 text-zinc-400 hover:bg-white/10": !allMailboxes(),
+                  }}
+                  onClick={() => setAllMailboxes((v) => !v)}
+                >
+                  全部邮箱 {allMailboxes() ? "开" : "关"}
+                </button>
+              </Show>
+              <Show when={searching()}>
+                <span class="text-[11px] text-zinc-500">搜索中…</span>
+              </Show>
+              <Show when={searchError()}>
+                <span class="text-[11px] text-rose-300">{searchError()}</span>
+              </Show>
+            </div>
+          </Show>
 
           <div class="mt-3 max-h-[52vh] overflow-auto">
             <For each={actions()}>
