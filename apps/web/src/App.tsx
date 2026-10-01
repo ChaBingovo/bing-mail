@@ -231,7 +231,12 @@ function ConsoleView() {
               onLoadMore={() => void session.loadMoreMessages()}
             />
 
-            <EmailViewer detail={session.detail() || null} html={session.html() || ""} text={session.text() || ""} />
+            <EmailViewer
+              detail={session.detail() || null}
+              html={session.html() || ""}
+              text={session.text() || ""}
+              onRetry={(id) => session.retryMessage(id)}
+            />
           </div>
         </Show>
       </div>

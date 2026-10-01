@@ -111,11 +111,18 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     return app.selectedId();
   });
 
-  const [detail] = createResource(selectedId, async (id) => {
+  const [detail, { refetch: refetchDetail }] = createResource(selectedId, async (id) => {
     if (!id || app.page() !== "inbox") return null;
     const data = await app.api.apiJson<{ message: MessageDetail }>(`/api/messages/${encodeURIComponent(id)}`);
     return data.message;
   });
+
+  /** Re-queue a FAILED message for parsing; refreshes both the row and the list. */
+  const retryMessage = async (id: string) => {
+    await app.api.apiJson(`/api/messages/${encodeURIComponent(id)}/retry`, { method: "POST" });
+    void refetchDetail();
+    void refetchMessages();
+  };
 
   const [html] = createResource(selectedId, async (id) => {
     if (!id || app.page() !== "inbox") return "";
@@ -152,6 +159,7 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     detail,
     html,
     text,
+    retryMessage,
     displayAddress,
     setDisplayAddress,
     activeOwnedAddress,

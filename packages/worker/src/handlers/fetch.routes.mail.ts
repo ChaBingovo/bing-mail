@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
-import { logWarn } from "../log";
+import { logError, logInfo, logWarn } from "../log";
 import { assertPublicHttpUrl } from "../url-guard";
 import * as S from "./fetch.shared";
 
@@ -262,6 +262,53 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     headers.set("cross-origin-resource-policy", "same-site");
     // BufferSource: hand the runtime a plain ArrayBuffer slice.
     return new Response(result.bytes.slice().buffer as ArrayBuffer, { status: 200, headers });
+  }
+
+  const msgRetryMatch = pathname.match(/^\/api\/messages\/([^/]+)\/retry$/);
+  if (msgRetryMatch && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+    const id = decodeURIComponent(msgRetryMatch[1]);
+    const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
+
+    const row = await S.requireMessageAccess(env, auth, id);
+    if (!row) return json({ error: "message_not_found" }, { status: 404 });
+    // Only a definitively failed row may be re-parsed: a SUCCESS row must not be
+    // re-run, and a PENDING row is already queued (the reaper covers a dead consumer).
+    if (row.status === "SUCCESS") return json({ error: "already_parsed" }, { status: 409 });
+    if (row.status !== "FAILED") return json({ error: "not_retryable" }, { status: 409 });
+
+    const raw = await env.DB.prepare("SELECT r2_raw_key FROM messages WHERE id = ?1 LIMIT 1")
+      .bind(id)
+      .first<{ r2_raw_key: string }>();
+    if (!raw?.r2_raw_key) return json({ error: "raw_missing" }, { status: 409 });
+
+    // Reset the row first (status-guarded, so a concurrent retry loses cleanly) and
+    // only then enqueue; the consumer re-reads the raw mail from R2, so nothing is
+    // duplicated. A failed enqueue is rolled back to FAILED rather than leaving a
+    // PENDING row with no job behind it.
+    const reset = await env.DB.prepare(
+      "UPDATE messages SET status='PENDING', attempt=0, error_reason=NULL, lock_id=NULL, locked_at=NULL, parsed_at=NULL WHERE id=?1 AND status='FAILED'",
+    )
+      .bind(id)
+      .run();
+    if ((reset.meta?.changes ?? 0) === 0) return json({ error: "not_retryable" }, { status: 409 });
+
+    try {
+      await env.PARSE_QUEUE.send({ messageId: id });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError({ event: "message_retry_enqueue_failed", requestId, messageId: id, error: message });
+      await env.DB.prepare("UPDATE messages SET status='FAILED', error_reason=?2 WHERE id=?1 AND status='PENDING'")
+        .bind(id, "retry enqueue failed")
+        .run()
+        .catch(() => undefined);
+      return json({ error: "enqueue_failed" }, { status: 502 });
+    }
+
+    logInfo({ event: "message_retry_requested", requestId, messageId: id });
+    return json({ id, status: "PENDING" }, { status: 202 });
   }
 
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
