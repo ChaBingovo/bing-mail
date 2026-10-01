@@ -22,6 +22,13 @@ export function createSpotlightActionBuilder(params: {
       onPick: () => params.app.setPage("inbox"),
     });
     actions.push({
+      key: "nav-compose",
+      title: "写邮件",
+      subtitle: "撰写并发送新邮件",
+      right: "↩",
+      onPick: () => params.app.setPage("compose"),
+    });
+    actions.push({
       key: "nav-settings",
       title: "账户设置",
       subtitle: "跳转到账户设置",
