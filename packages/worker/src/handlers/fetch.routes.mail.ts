@@ -113,13 +113,15 @@ async function fetchProxiedImage(
     }
 
     const declaredType = (res.headers.get("content-type") || "").toLowerCase();
-    const cleanDeclared = declaredType.startsWith("image/") ? declaredType.split(";")[0].trim() : "";
+    const declaredIsImage = declaredType.startsWith("image/");
+    const cleanDeclared = declaredIsImage ? declaredType.split(";")[0].trim() : "";
     const guessed = guessImageContentType(new URL(check.url).pathname);
     const sniffed = sniffImageMagic(bytes);
+    // An explicitly non-image content type without image magic bytes is a miss,
+    // even when the URL extension looks like an image (e.g. HTML served at *.png).
+    if (!sniffed && declaredType && !declaredIsImage) return { ok: false, status: 415 };
     const contentType = sniffed || cleanDeclared || guessed;
     if (!contentType.startsWith("image/")) return { ok: false, status: 415 };
-    // An explicitly non-image content type that also lacks image magic bytes is a miss.
-    if (!sniffed && !cleanDeclared && !guessed) return { ok: false, status: 415 };
 
     return { ok: true, bytes, contentType };
   }
