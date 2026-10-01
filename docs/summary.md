@@ -1,6 +1,6 @@
 # 项目现状总结
 
-最后更新：2026-10-01（beta 分支 `f2174f7`）
+最后更新：2026-10-01（beta 分支）
 
 本文记录 Bingmail 当前的功能状态、本轮完成的工作、待办事项与已知限制。启动与测试流程见 [quickstart.md](./quickstart.md)，部署见 [deploy-checklist.md](./deploy-checklist.md)。
 
@@ -25,7 +25,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 | --- | --- | --- |
 | 收信（主邮箱 + 别名） | 可用 | 未知收件人与黑名单会 `setReject` |
 | 邮件正文渲染 | 可用 | HTML 走 Shadow DOM + DOMPurify + CSP sandbox；纯文本/Markdown 有降级 |
-| 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、重定向上限、体积上限 |
+| 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、逐跳校验、重定向上限、体积上限、魔数嗅探 |
 | AI 提取验证码 | 可用 | 先正则粗筛再调 Workers AI，实测能正确提取验证码与服务名 |
 | 实时通知 | 可用 | WebSocket 推送 + 轮询回退（连续失败降级） |
 | 搜索 | 可用 | FTS5；输入会 token 引用化，非法语法返回 400 而非 500 |
@@ -66,7 +66,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 
 ### 3.4 测试与文档
 
-- 测试从 6 + 8 增至 **worker 47 / web 15**，新增覆盖：seed 哈希可验证、账号创建 409 分类、媒体代理出站白名单、Cookie 会话契约、别名配额为 0、入队顺序、认领未命中语义、重投与硬上限、僵尸清扫、FTS 查询净化、本地状态清理、游标分页合并。
+- 测试从 6 + 8 增至 **worker 60 / web 15**，新增覆盖：seed 哈希可验证、账号创建 409 分类、媒体代理出站白名单与路由层（鉴权 / 参数 / 重定向 / 体积 / 内容类型）、Cookie 会话契约、别名配额为 0、入队顺序、认领未命中语义、重投与硬上限、僵尸清扫、FTS 查询净化、本地状态清理、游标分页合并。
 - 新增文档：[quickstart.md](./quickstart.md)（启动与测试指南）。
 - 修正文档：`deploy-checklist.md` 里失效的本机绝对路径、README 补充自检命令、`.gitattributes` 收敛行尾噪音。
 
@@ -79,12 +79,18 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 - 清库：造假的 R2 附件 → `db:reset:local` → 附件被清、8 个迁移重新应用、库里只剩表结构。
 - 部署配置：`wrangler deploy --dry-run` 通过（Worker 200 KiB / gzip 43.5 KiB）。
 
+### 3.6 本轮继续（CI 与媒体代理）
+
+- **CI 补全**：`.github/workflows/deploy-worker.yml` 从只跑 worker 类型检查改为 `bun run check`，部署前强制通过 worker+web 类型检查、全部测试与前端构建。
+- **媒体代理路由层测试**：新增 `tests/media-proxy.test.ts` 13 个用例（鉴权、空 URL、私网拦截、逐跳重定向与上限、体积上限、内容类型判定、上游失败）。
+- **内容类型判定修复**：原先用 URL 扩展名兜底，HTML 放在 `*.png` 地址下会被误放行为 `image/png`；改为上游显式声明非 `image/*` 且无魔数字节时直接 415。
+
 ## 四、待实现（按优先级）
 
 ### P1 — 建议优先
 
-1. **CI 只做类型检查**：`.github/workflows/deploy-worker.yml` 目前只有 `Typecheck (worker)`，**没有跑测试、也没有跑前端构建**（前端构建只在部署时由 `[build]` 触发）。回归可以在 CI 全绿的情况下溜进主分支。建议把该步骤换成 `bun run check`。
-2. **媒体代理没有测试覆盖**：`/api/media/proxy` 的路由层零测试（只有 `url-guard.ts` 的单元测试）。它的参数解析、重定向上限、体积上限、内容类型判定都还没有守护，属于安全相关代码。
+1. ~~CI 只做类型检查~~ → **已完成**：检查步骤换成 `bun run check`（typecheck + 测试 + 前端构建）。
+2. ~~媒体代理没有测试覆盖~~ → **已完成**：新增 13 个路由层用例，并修复内容类型判定缺陷。
 3. **发信未实现**：`wrangler.toml` 里有 `send_email` 绑定但没有任何发送流程。若要"主力邮箱"，这是最大缺口。
 
 ### P2 — 值得做
@@ -114,7 +120,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 ## 六、快速核对
 
 ```powershell
-bun run check                                       # typecheck + 测试 + 构建（当前 worker 47 / web 15 全绿）
+bun run check                                       # typecheck + 测试 + 构建（当前 worker 60 / web 15 全绿）
 bun run dev:worker                                  # 启动 → http://127.0.0.1:8788
 bun --cwd packages/worker db:reset:local            # 清空本地数据
 bunx wrangler@4.19.0 --cwd . deploy --dry-run       # 校验部署配置
