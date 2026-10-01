@@ -1,20 +1,7 @@
 import DOMPurify from "dompurify";
 import { createEffect } from "solid-js";
 import { filterEmailCss, filterInlineStyle } from "../utils/emailCss";
-
-function extractHtmlAndCss(raw: string) {
-  try {
-    const doc = new DOMParser().parseFromString(raw || "", "text/html");
-    const styles = Array.from(doc.querySelectorAll("style"))
-      .map((s) => s.textContent || "")
-      .join("\n");
-    doc.querySelectorAll("style").forEach((s) => s.remove());
-    const html = doc.body?.innerHTML || "";
-    return { html, css: styles };
-  } catch {
-    return { html: raw || "", css: "" };
-  }
-}
+import { extractHtmlAndCss, toProxyImageSrc } from "../utils/emailHtml";
 
 let hooksInstalled = false;
 function ensureHooks() {
@@ -56,11 +43,7 @@ pre{white-space:pre-wrap;word-break:break-word}
         a.setAttribute("rel", "noreferrer noopener");
       });
       tpl.content.querySelectorAll("img").forEach((img) => {
-        const src = (img.getAttribute("src") || "").trim();
-        const lower = src.toLowerCase();
-        if (lower.startsWith("https://") || lower.startsWith("http://")) {
-          img.setAttribute("src", `/api/media/proxy?url=${encodeURIComponent(src)}`);
-        }
+        img.setAttribute("src", toProxyImageSrc(img.getAttribute("src") || ""));
         img.setAttribute("loading", "lazy");
         img.setAttribute("referrerpolicy", "no-referrer");
       });
