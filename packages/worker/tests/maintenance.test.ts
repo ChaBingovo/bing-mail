@@ -19,6 +19,7 @@ function createEnv(
   const deletes: string[][] = [];
   const batches: string[][] = [];
   const allCalls: { sql: string; bindings: unknown[] }[] = [];
+  const runs: string[] = [];
 
   const db = {
     prepare(sql: string) {
@@ -45,6 +46,7 @@ function createEnv(
           return { results: [] as T[], success: true, meta: {} };
         },
         async run() {
+          runs.push(sql);
           return { success: true, meta: { changes: opts.sentChanges ?? 0 } };
         },
       };
@@ -68,7 +70,7 @@ function createEnv(
     ...(opts.envRetention === undefined ? {} : { MAIL_RETENTION_DAYS: opts.envRetention }),
   } as any;
 
-  return { env, deletes, batches, allCalls };
+  return { env, deletes, batches, allCalls, runs };
 }
 
 test("a retention of 0 keeps everything and touches nothing", async () => {
@@ -142,4 +144,10 @@ test("a failing sweep is swallowed so the scheduled event cannot fail", async ()
   const rows: Row[] = [{ id: "m1", r2_raw_key: "raw/m1.eml", html_r2_key: null }];
   const { env } = createEnv({ setting: "30", rows, failBatch: true });
   expect(await handleScheduled(env)).toBeNull();
+});
+
+test("the scheduled sweep also reaps abandoned PENDING rows", async () => {
+  const { env, runs } = createEnv({ setting: "30", rows: [] });
+  await handleScheduled(env);
+  expect(runs.some((sql) => sql.includes("error_reason='abandoned"))).toBe(true);
 });

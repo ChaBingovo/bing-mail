@@ -1,11 +1,12 @@
 import type { Env } from "../env";
 import { logInfo, logWarn } from "../log";
 import { getMailRetentionDays } from "./fetch.shared";
+import { reapAbandonedMessages } from "./queue";
 
 /** Message rows handled per scheduled run, so one invocation stays inside CPU limits. */
 export const CLEANUP_BATCH_SIZE = 200;
-/** D1 batches are chunked to keep each round trip small. */
-const STATEMENT_CHUNK = 50;
+/** D1 batches are chunked to keep each round trip well under statement limits. */
+const STATEMENT_CHUNK = 40;
 
 export type CleanupResult = {
   retentionDays: number;
@@ -79,20 +80,35 @@ export async function cleanupExpiredMail(env: Env, now = Date.now()): Promise<Cl
 
 /** Cron entry point: never throws, so a failed sweep cannot fail the scheduled event. */
 export async function handleScheduled(env: Env) {
+  let result: CleanupResult | null = null;
   try {
-    const result = await cleanupExpiredMail(env);
+    result = await cleanupExpiredMail(env);
     logInfo({
       event: "maintenance_cleanup_done",
       status: result.messages > 0 || result.sentMessages > 0 ? "SUCCESS" : "NOOP",
       attempt: result.retentionDays,
     });
-    return result;
   } catch (err) {
     logWarn({
       event: "maintenance_cleanup_failed",
       status: "FAILED",
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
   }
+
+  // Also sweep abandoned PENDING rows. The queue consumer does this opportunistically,
+  // but only when a delivery actually arrives; running it from the cron guarantees a
+  // stuck row is surfaced as FAILED even if the queue goes quiet.
+  try {
+    const reaped = await reapAbandonedMessages(env);
+    if (reaped > 0) logInfo({ event: "maintenance_reaped", status: "SUCCESS", attempt: reaped });
+  } catch (err) {
+    logWarn({
+      event: "maintenance_reap_failed",
+      status: "FAILED",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return result;
 }

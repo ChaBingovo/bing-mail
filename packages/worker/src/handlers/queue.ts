@@ -129,7 +129,7 @@ export const SWEEP_SQL =
  * flight is never interrupted. The UPDATE is atomic and status-guarded, so
  * concurrent consumers cannot double-reap or fight over in-flight rows.
  */
-async function reapAbandonedMessages(env: Env) {
+export async function reapAbandonedMessages(env: Env) {
   const attempts = deliveryAttempts(env);
   const ttl = lockTtlMs(env);
   const now = Date.now();
