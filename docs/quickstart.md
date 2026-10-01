@@ -95,7 +95,7 @@ bun --cwd packages/worker test
 bun --cwd apps/web test
 ```
 
-本机实测参考值：`bun run check` 全绿时 worker 60 pass / web 15 pass / 前端构建成功。
+该命令先跑类型检查，再跑全部测试，最后构建前端；任何一步失败都会以非零码退出。测试数量会随用例增加而变化，以实际输出为准（这里不再写死，避免文档过期）。
 
 ## 5. 本地数据
 

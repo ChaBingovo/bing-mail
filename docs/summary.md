@@ -28,11 +28,13 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 | 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、逐跳校验、重定向上限、体积上限、魔数嗅探 |
 | AI 提取验证码 | 可用 | 先正则粗筛再调 Workers AI，实测能正确提取验证码与服务名 |
 | 实时通知 | 可用 | WebSocket 推送 + 轮询回退（连续失败降级） |
-| 搜索 | 可用 | FTS5；输入会 token 引用化，非法语法返回 400 而非 500 |
+| 搜索 | 可用 | FTS5；默认把输入 token 引用化（非法语法 400 而非 500），`mode=advanced` 可透传 OR/NOT/前缀，管理员可用 `address=*` 跨邮箱 |
 | 别名管理 | 可用 | 上限由 `max_aliases` 控制，`0` 表示禁用 |
-| 管理后台 | 可用 | 用户/邮箱/域名/注册开关/Turnstile 配置 |
+| 管理后台 | 可用 | 用户/邮箱/域名/注册开关/Turnstile 配置/邮件保留天数 |
 | 游标分页 | 可用 | 首屏 100 条，可"加载更早的邮件" |
-| 发信 | **未实现** | `wrangler.toml` 有 `send_email` 绑定但未接入主流程 |
+| 失败重试 | 可用 | 详情页对 FAILED 邮件一键重试解析（`POST /api/messages/:id/retry`） |
+| 保留期清理 | 可用 | 每日 cron 按 `retention_days` 删除超期收件与 R2 对象，`0` 表示永久保留 |
+| 发信 | 可用 | `POST /api/user/send`，发件人限本人主邮箱或启用别名；前端有「写邮件」页与已发送列表；本地未配置 `send_email` 时返回 503 |
 
 ## 三、本轮完成的工作
 
@@ -66,7 +68,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 
 ### 3.4 测试与文档
 
-- 测试从 6 + 8 增至 **worker 60 / web 15**，新增覆盖：seed 哈希可验证、账号创建 409 分类、媒体代理出站白名单与路由层（鉴权 / 参数 / 重定向 / 体积 / 内容类型）、Cookie 会话契约、别名配额为 0、入队顺序、认领未命中语义、重投与硬上限、僵尸清扫、FTS 查询净化、本地状态清理、游标分页合并。
+- 测试从 6 + 8 大幅扩充（数量以 `bun run check` 实际输出为准），新增覆盖：seed 哈希可验证、账号创建 409 分类、媒体代理出站白名单与路由层（鉴权 / 参数 / 重定向 / 体积 / 内容类型）、Cookie 会话契约、别名配额为 0、入队顺序、认领未命中语义、重投与硬上限、僵尸清扫、FTS 查询净化、本地状态清理、游标分页合并、发信校验、失败重试、保留期清理、搜索高级语法与跨邮箱权限、邮件 HTML 提取降级。
 - 新增文档：[quickstart.md](./quickstart.md)（启动与测试指南）。
 - 修正文档：`deploy-checklist.md` 里失效的本机绝对路径、README 补充自检命令、`.gitattributes` 收敛行尾噪音。
 
@@ -79,31 +81,39 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 - 清库：造假的 R2 附件 → `db:reset:local` → 附件被清、8 个迁移重新应用、库里只剩表结构。
 - 部署配置：`wrangler deploy --dry-run` 通过（Worker 200 KiB / gzip 43.5 KiB）。
 
-### 3.6 本轮继续（CI 与媒体代理）
+### 3.6 上一轮继续（CI 与媒体代理）
 
 - **CI 补全**：`.github/workflows/deploy-worker.yml` 从只跑 worker 类型检查改为 `bun run check`，部署前强制通过 worker+web 类型检查、全部测试与前端构建。
 - **媒体代理路由层测试**：新增 `tests/media-proxy.test.ts` 13 个用例（鉴权、空 URL、私网拦截、逐跳重定向与上限、体积上限、内容类型判定、上游失败）。
 - **内容类型判定修复**：原先用 URL 扩展名兜底，HTML 放在 `*.png` 地址下会被误放行为 `image/png`；改为上游显式声明非 `image/*` 且无魔数字节时直接 415。
 
+### 3.7 本轮继续（发信 / 可靠性 / 搜索）
+
+- **发信落地**：新增迁移 `0009_sent_messages.sql` 与 `POST /api/user/send`（发件人限本人主邮箱或已启用别名、收件人格式与数量、正文大小校验；未配置绑定返回 503；上游失败落一条 FAILED 记录并返回 502），以及 `GET /api/user/sent`；前端新增「写邮件」页与侧栏入口。
+- **失败重试入口**：`POST /api/messages/:id/retry`，仅 FAILED 行可重置为 PENDING 并重新入队；SUCCESS 拒绝重复解析、PENDING 视为已在队列中；入队失败回滚为 FAILED，前端在失败详情显示「重试解析」。
+- **R2 生命周期**：新增每日 cron 清理，删除超过保留期的收件行、其 R2 原始邮件/超限 HTML、FTS 索引以及超期发送记录；保留天数由 `retention_days`（管理员可改）控制，未设置时回退 `MAIL_RETENTION_DAYS`（默认 90），0 表示永久保留。
+- **搜索能力**：`/api/search` 支持 `mode=advanced`（透传 FTS5 运算符 OR/NOT/前缀）与 `address=*`（仅管理员跨邮箱，普通用户 403）；Spotlight 从纯本地过滤改为带防抖的服务端 FTS 搜索，并提供「高级语法」「全部邮箱」两个开关。
+- **打磨**：文档不再写死测试数量；把 `ShadowHtml` 的图片代理改写与 HTML 提取/降级逻辑抽到 `apps/web/src/utils/emailHtml.ts` 并补自动测试。
+
 ## 四、待实现（按优先级）
 
 ### P1 — 建议优先
 
-1. ~~CI 只做类型检查~~ → **已完成**：检查步骤换成 `bun run check`（typecheck + 测试 + 前端构建）。
-2. ~~媒体代理没有测试覆盖~~ → **已完成**：新增 13 个路由层用例，并修复内容类型判定缺陷。
-3. **发信未实现**：`wrangler.toml` 里有 `send_email` 绑定但没有任何发送流程。若要"主力邮箱"，这是最大缺口。
+- ~~CI 只做类型检查~~ → **已完成**（§3.6）。
+- ~~媒体代理没有测试覆盖~~ → **已完成**（§3.6）。
+- ~~发信未实现~~ → **已完成**（§3.7）。仍缺：附件、抄送/密送、草稿与 HTML 正文撰写；本地未配置 `send_email` 时返回 503。
 
 ### P2 — 值得做
 
-4. **无失败重试入口**：解析最终失败的行只能看到 FAILED，不能在界面上「重试」。后端已有重投机制，缺一个受控的手动触发接口。
-5. **R2 没有生命周期管理**：原始邮件与超限 HTML 永久留在 R2，没有任何清理策略（`lifecycle`/定时删除都没有），长期运行会持续增长。
-6. **搜索语法能力有限**：为安全起见把所有 token 都引用化，用户无法使用 `OR`/排除/前缀等 FTS 语法。若要高级检索需要额外设计。
-7. **搜索只在当前邮箱内**：不接受 `address=*`，跨邮箱搜索需要先补权限设计。
+- ~~无失败重试入口~~ → **已完成**（§3.7）。
+- ~~R2 没有生命周期管理~~ → **已完成**（§3.7）。
+- ~~搜索语法能力有限~~ → **已完成**（§3.7，`mode=advanced`）。
+- ~~搜索只在当前邮箱内~~ → **已完成**（§3.7，管理员 `address=*`）。
 
 ### P3 — 打磨
 
-8. **DOM 渲染层无自动测试**：`ShadowHtml` / `EmailViewer` 的降级路径（渲染异常时回退纯文本）只有人工清单（[email-rendering-checklist.md](./email-rendering-checklist.md)），没有自动测试。
-9. **测试用例数散落在文档里**：quickstart 里的 "worker 60 / web 15" 需要手工同步，容易过期。
+- ~~DOM 渲染层无自动测试~~ → **部分完成**：`utils/emailHtml.ts` 的图片代理改写、`<style>` 提取与解析失败降级已有自动测试；组件级 DOM 行为（Shadow DOM 挂载、DOMPurify 实际净化结果）仍靠人工清单 [email-rendering-checklist.md](./email-rendering-checklist.md)，要自动化需要引入 DOM 环境（如 happy-dom），本轮未新增依赖。
+- ~~测试用例数散落在文档里~~ → **已完成**：文档不再写死数量，以命令输出为准。
 
 ## 五、已知限制与陷阱
 
@@ -116,17 +126,19 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 | D1 无多语句事务 | 账号创建用「原子插入 + 失败回滚」补偿，而不是事务 |
 | Lazy schema 是禁止的 | 数据库改动必须走 `packages/db/migrations/`，不允许在业务代码里做字段兼容（见 AGENTS.md） |
 | 仓库路径含中文 | 不要把它传给 `cmd`；脚本一律用相对路径 |
+| 本地发信 | 本地 dev 不真正投递邮件，未配置绑定时 `POST /api/user/send` 返回 503 `mail_not_configured`；发信依赖部署后的 `send_email` |
+| 定时清理依赖 cron | `scheduled` 只在部署后由 Cloudflare 触发，本地 `wrangler dev` 不会自动跑；清理逻辑可被直接调用（测试即如此） |
 
 ## 六、快速核对
 
 ```powershell
-bun run check                                       # typecheck + 测试 + 构建（当前 worker 60 / web 15 全绿）
+bun run check                                       # typecheck + 测试 + 构建（数量以实际输出为准）
 bun run dev:worker                                  # 启动 → http://127.0.0.1:8788
 bun --cwd packages/worker db:reset:local            # 清空本地数据
 bunx wrangler@4.19.0 --cwd . deploy --dry-run       # 校验部署配置
 ```
 
-工作区当前状态：`beta` 分支、工作区干净、已与 `origin/beta` 同步。本地数据库在最近一次 `db:reset:local` 后为空，首次打开会进入初始化向导。
+工作区当前状态：`beta` 分支、工作区干净；本轮提交见 `git log --oneline`（是否推送以 `git status` 为准）。本地数据库在最近一次 `db:reset:local` 后为空，首次打开会进入初始化向导。
 
 > 第四节的待办同时维护在仓库根目录的 `TODO.md`（该文件被 `.gitignore` 排除，属于本地文件）：原有分级清单保留为历史记录，其下新增了「下一轮（2026-10 审查新增）」章节。
 
