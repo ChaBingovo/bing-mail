@@ -359,6 +359,21 @@ export async function getMaxAliases(env: Env) {
   return parseSettingInt(await getSetting(env, "max_aliases"), 3, 0);
 }
 
+export const DEFAULT_MAIL_RETENTION_DAYS = 90;
+
+/**
+ * How long inbound raw mail, oversized HTML and sent history are kept.
+ * `0` disables cleanup entirely; an unset value falls back to the
+ * `MAIL_RETENTION_DAYS` var and then to the default.
+ */
+export async function getMailRetentionDays(env: Env) {
+  const fromDb = await getSetting(env, "retention_days");
+  if (typeof fromDb === "string" && fromDb.trim()) {
+    return parseSettingInt(fromDb, DEFAULT_MAIL_RETENTION_DAYS, 0);
+  }
+  return parseSettingInt(env.MAIL_RETENTION_DAYS ?? null, DEFAULT_MAIL_RETENTION_DAYS, 0);
+}
+
 export async function isInitialized(env: Env) {
   const row = await env.DB.prepare("SELECT 1 AS ok FROM users WHERE is_admin = 1 LIMIT 1").first<{ ok: 1 }>();
   return Boolean(row?.ok);

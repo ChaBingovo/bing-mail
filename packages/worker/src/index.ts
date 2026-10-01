@@ -2,6 +2,7 @@ import type { Env, ParseQueueMessage } from "./env";
 import type { MessageBatch } from "@cloudflare/workers-types";
 import { handleEmail } from "./handlers/email";
 import { handleFetch } from "./handlers/fetch";
+import { handleScheduled } from "./handlers/maintenance";
 import { handleQueue } from "./handlers/queue";
 export { MailEventsDO } from "./durable/mailEvents";
 export { AuthRateLimitDO } from "./durable/authRateLimit";
@@ -46,5 +47,8 @@ export default {
   },
   queue(batch: MessageBatch<ParseQueueMessage>, env: Env, ctx: ExecutionContext) {
     return handleQueue(batch, env, ctx);
+  },
+  scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(handleScheduled(env));
   },
 };

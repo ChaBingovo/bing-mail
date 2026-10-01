@@ -9,7 +9,8 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const allowRegister = (await S.getSetting(env, "allow_register")) === "1";
     const maxAliases = await S.getMaxAliases(env);
-    return json({ allowRegister, maxAliases });
+    const retentionDays = await S.getMailRetentionDays(env);
+    return json({ allowRegister, maxAliases, retentionDays });
   }
 
   if (pathname === "/api/admin/settings" && request.method === "PUT") {
@@ -20,9 +21,16 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     const allowRegister = S.getBooleanField(body, "allowRegister");
     const maxAliasesRaw = S.getNumberField(body, "maxAliases");
     const maxAliases = typeof maxAliasesRaw === "number" ? Math.floor(maxAliasesRaw) : null;
-    if (allowRegister === null && maxAliases === null) return json({ error: "invalid_payload" }, { status: 400 });
+    const retentionRaw = S.getNumberField(body, "retentionDays");
+    const retentionDays = typeof retentionRaw === "number" ? Math.floor(retentionRaw) : null;
+    if (allowRegister === null && maxAliases === null && retentionDays === null) {
+      return json({ error: "invalid_payload" }, { status: 400 });
+    }
     if (maxAliases !== null && (!Number.isFinite(maxAliases) || maxAliases < 0 || maxAliases > 50)) {
       return json({ error: "invalid_max_aliases" }, { status: 400 });
+    }
+    if (retentionDays !== null && (!Number.isFinite(retentionDays) || retentionDays < 0 || retentionDays > 3650)) {
+      return json({ error: "invalid_retention_days" }, { status: 400 });
     }
 
     const now = Date.now();
@@ -40,9 +48,17 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
         .bind(String(maxAliases), now)
         .run();
     }
+    if (typeof retentionDays === "number") {
+      await env.DB.prepare(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('retention_days', ?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      )
+        .bind(String(retentionDays), now)
+        .run();
+    }
     const nextAllowRegister = (await S.getSetting(env, "allow_register")) === "1";
     const nextMaxAliases = await S.getMaxAliases(env);
-    return json({ allowRegister: nextAllowRegister, maxAliases: nextMaxAliases });
+    const nextRetentionDays = await S.getMailRetentionDays(env);
+    return json({ allowRegister: nextAllowRegister, maxAliases: nextMaxAliases, retentionDays: nextRetentionDays });
   }
 
   if (pathname === "/api/admin/turnstile" && request.method === "GET") {

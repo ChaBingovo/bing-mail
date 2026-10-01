@@ -27,7 +27,9 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   const [error, setError] = createSignal("");
 
   const [settings, { refetch: refetchSettings }] = createResource(async () => {
-    const data = await props.api.apiJson<{ allowRegister: boolean; maxAliases: number }>("/api/admin/settings");
+    const data = await props.api.apiJson<{ allowRegister: boolean; maxAliases: number; retentionDays: number }>(
+      "/api/admin/settings",
+    );
     return data;
   });
 
@@ -72,6 +74,7 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   const [mbMailboxDomain, setMbMailboxDomain] = createSignal("");
   const [mbUserId, setMbUserId] = createSignal("");
   const [maxAliasesDraft, setMaxAliasesDraft] = createSignal(0);
+  const [retentionDaysDraft, setRetentionDaysDraft] = createSignal(0);
   const [turnstileModeDraft, setTurnstileModeDraft] = createSignal("off");
   const [turnstileSiteKeyDraft, setTurnstileSiteKeyDraft] = createSignal("");
   const [turnstileSecretDraft, setTurnstileSecretDraft] = createSignal("");
@@ -79,6 +82,11 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   createEffect(() => {
     const v = settings()?.maxAliases;
     if (typeof v === "number") setMaxAliasesDraft(v);
+  });
+
+  createEffect(() => {
+    const v = settings()?.retentionDays;
+    if (typeof v === "number") setRetentionDaysDraft(v);
   });
 
   createEffect(() => {
@@ -110,6 +118,20 @@ export function AdminSettingsView(props: { api: ApiClient }) {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ maxAliases: maxAliasesDraft() }),
+      });
+      refetchSettings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+    }
+  };
+
+  const saveRetentionDays = async () => {
+    setError("");
+    try {
+      await props.api.apiJson("/api/admin/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ retentionDays: retentionDaysDraft() }),
       });
       refetchSettings();
     } catch (err) {
@@ -276,6 +298,30 @@ export function AdminSettingsView(props: { api: ApiClient }) {
             <button
               class="shrink-0 rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20"
               onClick={saveMaxAliases}
+            >
+              保存
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div class="text-sm font-semibold text-zinc-100">邮件保留天数</div>
+          <div class="mt-1 text-xs text-zinc-500">
+            超过该天数的收件（含 R2 原始邮件与超限 HTML）与发送记录会被每日定时任务清理；填 0 表示永久保留。
+          </div>
+          <div class="mt-4 flex gap-2">
+            <input
+              value={String(retentionDaysDraft())}
+              onInput={(e) =>
+                setRetentionDaysDraft(Math.max(0, Math.min(3650, Math.floor(Number(e.currentTarget.value) || 0))))
+              }
+              inputMode="numeric"
+              placeholder="90"
+              class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            <button
+              class="shrink-0 rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20"
+              onClick={saveRetentionDays}
             >
               保存
             </button>
