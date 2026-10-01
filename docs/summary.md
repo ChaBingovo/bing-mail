@@ -103,7 +103,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 ### P3 — 打磨
 
 8. **DOM 渲染层无自动测试**：`ShadowHtml` / `EmailViewer` 的降级路径（渲染异常时回退纯文本）只有人工清单（[email-rendering-checklist.md](./email-rendering-checklist.md)），没有自动测试。
-9. **测试用例数散落在文档里**：quickstart 里的 "worker 47 / web 15" 需要手工同步，容易过期。
+9. **测试用例数散落在文档里**：quickstart 里的 "worker 60 / web 15" 需要手工同步，容易过期。
 
 ## 五、已知限制与陷阱
 
