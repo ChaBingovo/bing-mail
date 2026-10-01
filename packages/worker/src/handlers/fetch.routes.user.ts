@@ -1,7 +1,13 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
 import { hashPassword, verifyPassword } from "../auth";
+import { logError } from "../log";
 import * as S from "./fetch.shared";
+
+const MAX_RECIPIENTS = 20;
+const MAX_SUBJECT_LENGTH = 998;
+/** Per-part cap for the text/html bodies (Cloudflare's own limit is ~25 MiB total). */
+const MAX_SEND_BODY_LENGTH = 512 * 1024;
 
 export async function handleUserRoutes(request: Request, env: Env, url: URL, pathname: string): Promise<Response | null> {
   if (pathname === "/api/user/password" && request.method === "PUT") {
@@ -36,6 +42,129 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
       .bind(auth.sub)
       .first<{ address: string }>();
     return json({ address: row?.address || null });
+  }
+
+  if (pathname === "/api/user/send" && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+    const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
+
+    const body = await S.readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+
+    const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string; address: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
+
+    // Sender defaults to the primary mailbox; a different value must be one of the
+    // user's own active aliases, so nobody can spoof another mailbox.
+    const requestedFrom = S.getLowerStringField(body, "from");
+    let from = mailbox.address;
+    if (requestedFrom && requestedFrom !== mailbox.address) {
+      const alias = await env.DB.prepare(
+        "SELECT 1 AS ok FROM mailbox_aliases WHERE mailbox_id = ?1 AND address = ?2 AND is_active = 1 LIMIT 1",
+      )
+        .bind(mailbox.id, requestedFrom)
+        .first<{ ok: 1 }>();
+      if (!alias?.ok) return json({ error: "invalid_from" }, { status: 400 });
+      from = requestedFrom;
+    }
+
+    const recipients = S.parseAddressList(S.getStringField(body, "to") || "");
+    if (recipients.length === 0) return json({ error: "recipient_required" }, { status: 400 });
+    if (recipients.length > MAX_RECIPIENTS) return json({ error: "too_many_recipients" }, { status: 400 });
+    if (recipients.some((address) => !S.isValidEmailAddress(address))) {
+      return json({ error: "invalid_recipient" }, { status: 400 });
+    }
+
+    const subject = (S.getStringField(body, "subject") || "").trim();
+    const textBody = S.getStringField(body, "text") || "";
+    const htmlBody = S.getStringField(body, "html") || "";
+    if (subject.length > MAX_SUBJECT_LENGTH) return json({ error: "subject_too_long" }, { status: 400 });
+    if (!textBody.trim() && !htmlBody.trim()) return json({ error: "body_required" }, { status: 400 });
+    if (textBody.length > MAX_SEND_BODY_LENGTH || htmlBody.length > MAX_SEND_BODY_LENGTH) {
+      return json({ error: "body_too_large" }, { status: 413 });
+    }
+
+    if (!env.EMAIL || typeof env.EMAIL.send !== "function") {
+      return json({ error: "mail_not_configured" }, { status: 503 });
+    }
+
+    const id = crypto.randomUUID();
+    const to = recipients.join(", ");
+    const snippet = (textBody || htmlBody).replace(/\s+/g, " ").trim().slice(0, 140) || null;
+    const sentAt = Date.now();
+    try {
+      const result = await env.EMAIL.send({
+        from,
+        to: recipients,
+        subject,
+        text: textBody || undefined,
+        html: htmlBody || undefined,
+      });
+      await env.DB.prepare(
+        "INSERT INTO sent_messages (id, mailbox_id, from_address, to_address, subject, snippet, status, sent_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'SENT', ?7)",
+      )
+        .bind(id, mailbox.id, from, to, subject || null, snippet, sentAt)
+        .run();
+      return json(
+        { message: { id, from, to: recipients, subject, status: "SENT" }, messageId: result?.messageId ?? null },
+        { status: 201 },
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logError({ event: "send_message_failed", requestId, error: reason });
+      // Keep a FAILED row so the attempt is visible instead of silently lost.
+      await env.DB.prepare(
+        "INSERT INTO sent_messages (id, mailbox_id, from_address, to_address, subject, snippet, status, error_reason, sent_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'FAILED', ?7, ?8)",
+      )
+        .bind(id, mailbox.id, from, to, subject || null, snippet, reason.slice(0, 500), sentAt)
+        .run()
+        .catch(() => undefined);
+      return json({ error: "send_failed" }, { status: 502 });
+    }
+  }
+
+  if (pathname === "/api/user/sent" && request.method === "GET") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const mailbox = await env.DB.prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ messages: [] });
+
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
+    const res = await env.DB.prepare(
+      "SELECT id, from_address, to_address, subject, snippet, status, error_reason, sent_at FROM sent_messages WHERE mailbox_id = ?1 ORDER BY sent_at DESC LIMIT ?2",
+    )
+      .bind(mailbox.id, limit)
+      .all<{
+        id: string;
+        from_address: string;
+        to_address: string;
+        subject: string | null;
+        snippet: string | null;
+        status: string;
+        error_reason: string | null;
+        sent_at: number;
+      }>();
+
+    return json({
+      messages: res.results.map((r) => ({
+        id: r.id,
+        fromAddress: r.from_address,
+        toAddress: r.to_address,
+        subject: r.subject,
+        snippet: r.snippet,
+        status: r.status,
+        errorReason: r.error_reason,
+        sentAt: r.sent_at,
+      })),
+    });
   }
 
   if (pathname === "/api/user/messages" && request.method === "GET") {

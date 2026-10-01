@@ -5,7 +5,7 @@ import { getJson, getString, removeKey, setJson, setString } from "../services/s
 
 export type AppMode = "guest" | "user";
 
-export type AppPage = "inbox" | "settings" | "admin";
+export type AppPage = "inbox" | "compose" | "settings" | "admin";
 
 export type AppContextValue = {
   mode: () => AppMode;

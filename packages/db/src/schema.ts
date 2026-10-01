@@ -115,3 +115,24 @@ export const messages = sqliteTable(
     index("messages_mailbox_id_received_at_id_idx").on(t.mailboxId, t.receivedAt, t.id),
   ],
 );
+
+/** Outbound mail sent through the `send_email` binding (see migration 0009). */
+export const sentMessages = sqliteTable(
+  "sent_messages",
+  {
+    id: text("id").primaryKey(),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    fromAddress: text("from_address").notNull(),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject"),
+    snippet: text("snippet"),
+    status: text("status", { enum: ["SENT", "FAILED"] }).notNull(),
+    errorReason: text("error_reason"),
+    sentAt: integer("sent_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("sent_messages_mailbox_sent_at_idx").on(t.mailboxId, t.sentAt)],
+);

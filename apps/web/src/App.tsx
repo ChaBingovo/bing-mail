@@ -7,6 +7,7 @@ import { SetupView } from "./components/SetupView";
 import { Sidebar } from "./components/Sidebar";
 import { AdminSettingsView } from "./components/AdminSettingsView";
 import { UserSettingsView } from "./components/UserSettingsView";
+import { ComposeView } from "./components/ComposeView";
 import { NotificationIsland } from "./components/NotificationIsland";
 import { Spotlight } from "./components/Spotlight";
 import { AppProvider, useApp } from "./context/AppContext";
@@ -199,6 +200,13 @@ function ConsoleView() {
           fallback={
             <div class="grid h-full grid-cols-[280px_1fr] gap-0">
               {sidebar()}
+              <Show when={app.page() === "compose"}>
+                <ComposeView
+                  api={app.api}
+                  mailbox={session.mailboxAddress() || ""}
+                  aliases={session.aliases()?.aliases || []}
+                />
+              </Show>
               <Show when={app.page() === "settings"}>
                 <UserSettingsView user={app.currentUser()!} api={app.api} />
               </Show>

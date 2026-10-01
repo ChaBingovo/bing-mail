@@ -317,6 +317,31 @@ export function makeEmailAddress(local: string, domain: string) {
   return `${l}@${d}`.toLowerCase();
 }
 
+/**
+ * Deliberately permissive: rejects obviously malformed input (spaces, double
+ * dots, multiple `@`, bad domain labels) without bouncing valid addresses.
+ */
+export function isValidEmailAddress(value: string) {
+  const v = (value || "").trim();
+  if (!v || v.length > 320) return false;
+  if (/[\s,;<>"()[\]]/.test(v)) return false;
+  const at = v.indexOf("@");
+  if (at <= 0 || at !== v.lastIndexOf("@")) return false;
+  const local = v.slice(0, at);
+  const domain = v.slice(at + 1);
+  if (!local || local.length > 64) return false;
+  if (!domain || domain.length > 255 || domain.includes("..")) return false;
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(domain);
+}
+
+/** Splits a comma/semicolon separated recipient list and normalises each address. */
+export function parseAddressList(value: string) {
+  return (value || "")
+    .split(/[,;]/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+}
+
 /** `limit` = 0 is honoured: admins use it to switch a quota off entirely. */
 export function parseSettingInt(raw: string | null, fallback: number, limit = 1) {
   // Note: Number(null) is 0 and Number("") is 0, so an unset row must be handled
