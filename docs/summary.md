@@ -23,7 +23,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 收信（主邮箱 + 别名） | 可用 | 未知收件人与黑名单会 `setReject`；关键持久化在同步路径完成，拒绝能早于 SMTP 应答 |
+| 收信（主邮箱 + 别名） | 可用 | 未知收件人、黑名单与超 25 MiB 会 `setReject`；关键持久化在同步路径完成，拒绝能早于 SMTP 应答 |
 | 邮件正文渲染 | 可用 | HTML 走 Shadow DOM + DOMPurify + CSP sandbox；纯文本/Markdown 有降级 |
 | 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、逐跳校验、重定向上限、体积上限、魔数嗅探 |
 | 内联图片（cid） | 可用 | `src="cid:..."` 重写为同源附件端点，不经外部网络 |
@@ -103,7 +103,7 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 
 ### 3.8 本轮继续（收信时序 / 附件 / 会话 / 工程）
 
-- **P0 收信时序**：R2 上传、入队、落库从 `ctx.waitUntil()` 移到 `handleEmail` 的同步路径，失败即同步 `setReject`——在此之前 250 应答已发出，拒答无效会导致静默丢信。
+- **P0 收信时序**：R2 上传、入队、落库从 `ctx.waitUntil()` 移到 `handleEmail` 的同步路径，失败即同步 `setReject`。依据来自官方文档：`waitUntil` 的工作在响应返回**之后**才执行，而 `setReject` 写出的正是 SMTP 应答——放在 `waitUntil` 里等于放弃拒答（官方 11 个示例也都在 awaited 路径上调用它）。同时补了 25 MiB 入站大小守卫。
 - **删除邮件**：`DELETE /api/messages/:id`，先删 R2（原文 / 超限 HTML / 附件）再删 FTS、附件与消息行；R2 失败保留行交给 cron。前端详情页可删除并从本地分页缓存移除。
 - **服务端已读**：迁移 0010 增加 `mailboxes.last_read_at` 与 `POST /api/user/read`；两个 red-dot 端点改由服务端计算，`since` 不再取自前端；localStorage 标记只作一次性迁移来源。
 - **附件**：迁移 0010 新增 `message_attachments`；解析后写入 R2（单个 10 MiB / 合计 25 MiB），提供列表与下载端点，`inline=1` 仅对 `image/*` 生效；前端显示附件列表并下载。

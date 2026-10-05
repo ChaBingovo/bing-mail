@@ -11,8 +11,24 @@ function normalizeAddress(value: unknown) {
   return String(value).trim().toLowerCase();
 }
 
+/**
+ * Inbound size ceiling. Cloudflare enforces the same 25 MiB limit before the
+ * handler runs; mirroring it here makes the rejection reason explicit and keeps a
+ * message that cannot be stored from reaching R2 at all.
+ */
+const MAX_INBOUND_BYTES = 25 * 1024 * 1024;
+
 export async function handleEmail(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) {
   const requestId = crypto.randomUUID();
+  const rawSize = typeof (message as any).rawSize === "number" ? ((message as any).rawSize as number) : 0;
+
+  // Checked before any database work: the size is a property of the message itself.
+  if (rawSize > MAX_INBOUND_BYTES) {
+    logWarn({ event: "email_ingest_reject_too_large", requestId, error: `rawSize=${rawSize}` });
+    message.setReject("Message too large");
+    return;
+  }
+
   const to = normalizeAddress(message.to);
   const from = normalizeAddress(message.from);
 
@@ -66,9 +82,8 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, _c
       customMetadata: { mailboxId: target.id, receivedAt: String(receivedAt) },
     };
 
-    const rawSize = (message as any).rawSize;
     const FixedLengthStreamCtor = (globalThis as any).FixedLengthStream;
-    if (typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 && typeof FixedLengthStreamCtor === "function") {
+    if (rawSize > 0 && Number.isFinite(rawSize) && typeof FixedLengthStreamCtor === "function") {
       const fls = new FixedLengthStreamCtor(rawSize);
       const piping = message.raw.pipeTo(fls.writable);
       await Promise.all([piping, env.MAIL_BUCKET.put(rawKey, fls.readable, meta)]);

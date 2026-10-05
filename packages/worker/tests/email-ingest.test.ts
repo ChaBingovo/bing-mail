@@ -66,6 +66,29 @@ function createHarness(opts: { failSend?: boolean } = {}) {
   return { env, message, ctx, ops, events, getRejected: () => rejected };
 }
 
+test("an oversized message is rejected before any database or R2 work", async () => {
+  const h = createHarness();
+  // Cloudflare enforces this upstream too; the handler mirrors it so the reason is
+  // explicit and an unstorable message never reaches the bucket.
+  h.message.rawSize = 25 * 1024 * 1024 + 1;
+
+  await handleEmail(h.message, h.env, h.ctx);
+
+  expect(h.getRejected()).toBe("Message too large");
+  expect(h.ops.length).toBe(0);
+  expect(h.events.length).toBe(0);
+});
+
+test("a message exactly at the limit is still accepted", async () => {
+  const h = createHarness();
+  h.message.rawSize = 25 * 1024 * 1024;
+
+  await handleEmail(h.message, h.env, h.ctx);
+
+  expect(h.getRejected()).toBeNull();
+  expect(h.ops.some((op) => op.kind === "r2")).toBe(true);
+});
+
 test("the queue job is enqueued before the PENDING row is written", async () => {
   const h = createHarness();
   await handleEmail(h.message, h.env, h.ctx);
