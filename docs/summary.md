@@ -23,18 +23,24 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 收信（主邮箱 + 别名） | 可用 | 未知收件人与黑名单会 `setReject` |
+| 收信（主邮箱 + 别名） | 可用 | 未知收件人与黑名单会 `setReject`；关键持久化在同步路径完成，拒绝能早于 SMTP 应答 |
 | 邮件正文渲染 | 可用 | HTML 走 Shadow DOM + DOMPurify + CSP sandbox；纯文本/Markdown 有降级 |
 | 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、逐跳校验、重定向上限、体积上限、魔数嗅探 |
+| 内联图片（cid） | 可用 | `src="cid:..."` 重写为同源附件端点，不经外部网络 |
+| 附件 | 可用 | 解析后存 R2 并可下载；单个 10 MiB / 合计 25 MiB 上限 |
 | AI 提取验证码 | 可用 | 先正则粗筛再调 Workers AI，实测能正确提取验证码与服务名 |
 | 实时通知 | 可用 | WebSocket 推送 + 轮询回退（连续失败降级） |
 | 搜索 | 可用 | FTS5；默认把输入 token 引用化（非法语法 400 而非 500），`mode=advanced` 可透传 OR/NOT/前缀，管理员可用 `address=*` 跨邮箱 |
 | 别名管理 | 可用 | 上限由 `max_aliases` 控制，`0` 表示禁用 |
+| 黑名单发件人 | 可用 | 账户设置页可增删；收信时直接拒收 |
 | 管理后台 | 可用 | 用户/邮箱/域名/注册开关/Turnstile 配置/邮件保留天数 |
 | 游标分页 | 可用 | 首屏 100 条，可"加载更早的邮件" |
-| 失败重试 | 可用 | 详情页对 FAILED 邮件一键重试解析（`POST /api/messages/:id/retry`） |
-| 保留期清理 | 可用 | 每日 cron 按 `retention_days` 删除超期收件与 R2 对象，`0` 表示永久保留 |
-| 发信 | 可用 | `POST /api/user/send`，发件人限本人主邮箱或启用别名；前端有「写邮件」页与已发送列表；本地未配置 `send_email` 时返回 503 |
+| 删除邮件 | 可用 | `DELETE /api/messages/:id`，先删 R2 再删行，失败留给 cron 兜底 |
+| 已读状态 | 可用 | 服务端 `mailboxes.last_read_at`，跨设备一致 |
+| 失败重试 | 可用 | 详情页对 FAILED 邮件一键重试解析（`POST /api/messages/:id/retry`），并校验 R2 原文仍在 |
+| 保留期清理 | 可用 | 每日 cron 按 `retention_days` 删除超期收件、附件与 R2 对象，`0` 表示永久保留 |
+| 发信 | 可用 | `POST /api/user/send`，发件人限本人主邮箱或启用别名；每日配额（`SEND_DAILY_LIMIT`）；前端有「写邮件」页与已发送列表 |
+| 会话吊销 | 可用 | 改密码 / 管理员重置后旧 JWT 立即失效（`pv` 指纹） |
 
 ## 三、本轮完成的工作
 
@@ -95,13 +101,26 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 - **搜索能力**：`/api/search` 支持 `mode=advanced`（透传 FTS5 运算符 OR/NOT/前缀）与 `address=*`（仅管理员跨邮箱，普通用户 403）；Spotlight 从纯本地过滤改为带防抖的服务端 FTS 搜索，并提供「高级语法」「全部邮箱」两个开关。
 - **打磨**：文档不再写死测试数量；把 `ShadowHtml` 的图片代理改写与 HTML 提取/降级逻辑抽到 `apps/web/src/utils/emailHtml.ts` 并补自动测试。
 
+### 3.8 本轮继续（收信时序 / 附件 / 会话 / 工程）
+
+- **P0 收信时序**：R2 上传、入队、落库从 `ctx.waitUntil()` 移到 `handleEmail` 的同步路径，失败即同步 `setReject`——在此之前 250 应答已发出，拒答无效会导致静默丢信。
+- **删除邮件**：`DELETE /api/messages/:id`，先删 R2（原文 / 超限 HTML / 附件）再删 FTS、附件与消息行；R2 失败保留行交给 cron。前端详情页可删除并从本地分页缓存移除。
+- **服务端已读**：迁移 0010 增加 `mailboxes.last_read_at` 与 `POST /api/user/read`；两个 red-dot 端点改由服务端计算，`since` 不再取自前端；localStorage 标记只作一次性迁移来源。
+- **附件**：迁移 0010 新增 `message_attachments`；解析后写入 R2（单个 10 MiB / 合计 25 MiB），提供列表与下载端点，`inline=1` 仅对 `image/*` 生效；前端显示附件列表并下载。
+- **cid 内联图片**：`src="cid:..."` 重写为同源附件端点，兼容大小写 / 尖括号 / 单双引号，未命中保留原样。
+- **会话吊销**：JWT 增加 `pv`（口令哈希截断指纹），改密码或管理员重置后旧 token 立即失效；无 `pv` 的旧 token 放行一次以免部署即全员登出。
+- **发信配额**：复用 `AUTH_RATE` DO（`send:<userId>`，24h 窗口），超限 429，仅成功投递计数，DO 故障时放行。
+- **黑名单入口**：`GET/POST/DELETE /api/user/blocked-senders` + 账户设置页，此前该表只有判定逻辑没有写入入口。
+- **重试校验**：`/retry` 增加 `MAIL_BUCKET.head()`，R2 原文已被清理时返回 409 而不是再失败一次。
+- **工程**：新增 PR 触发的 `check.yml`；删除 `deploy-worker.yml` 里会跳过首次运行的 `run_number != 1`；两处重复的分页查询收敛为 `listMessagesPage()`；保留期清理同步删除附件；`.gitignore` 去重。
+
 ## 四、待实现（按优先级）
 
 ### P1 — 建议优先
 
-- ~~CI 只做类型检查~~ → **已完成**（§3.6）。
+- ~~CI 只做类型检查~~ → **已完成**（§3.6）；PR 校验见 §3.8。
 - ~~媒体代理没有测试覆盖~~ → **已完成**（§3.6）。
-- ~~发信未实现~~ → **已完成**（§3.7）。仍缺：附件、抄送/密送、草稿与 HTML 正文撰写；本地未配置 `send_email` 时返回 503。
+- ~~发信未实现~~ → **已完成**（§3.7/§3.8）。仍缺：附件、抄送/密送、草稿与 HTML 正文撰写；本地未配置 `send_email` 时返回 503。
 
 ### P2 — 值得做
 
@@ -109,11 +128,20 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 - ~~R2 没有生命周期管理~~ → **已完成**（§3.7）。
 - ~~搜索语法能力有限~~ → **已完成**（§3.7，`mode=advanced`）。
 - ~~搜索只在当前邮箱内~~ → **已完成**（§3.7，管理员 `address=*`）。
+- ~~无删除/归档、已读只在浏览器、附件被丢弃、黑名单无入口~~ → **已完成**（§3.8）。
 
 ### P3 — 打磨
 
-- ~~DOM 渲染层无自动测试~~ → **部分完成**：`utils/emailHtml.ts` 的图片代理改写、`<style>` 提取与解析失败降级已有自动测试；组件级 DOM 行为（Shadow DOM 挂载、DOMPurify 实际净化结果）仍靠人工清单 [email-rendering-checklist.md](./email-rendering-checklist.md)，要自动化需要引入 DOM 环境（如 happy-dom），本轮未新增依赖。
+- ~~DOM 渲染层无自动测试~~ → **部分完成**：`utils/emailHtml.ts` 的图片代理改写、cid 重写、`<style>` 提取与解析失败降级已有自动测试；组件级 DOM 行为（Shadow DOM 挂载、DOMPurify 实际净化结果）仍靠人工清单 [email-rendering-checklist.md](./email-rendering-checklist.md)，要自动化需要引入 DOM 环境（如 happy-dom），本轮未新增依赖。
 - ~~测试用例数散落在文档里~~ → **已完成**：文档不再写死数量，以命令输出为准。
+
+### 下一轮候选
+
+- 发信补附件、抄送/密送、草稿与 HTML 正文撰写
+- 邮件归档 / 文件夹 / 会话串（目前是平铺时间线）
+- 引入 DOM 环境，把 `ShadowHtml` 组件级降级路径自动化
+- 媒体代理响应缓存（滚动看图会重复回源）
+- 端到端测试（当前 150+ 用例全是 mock 单测，收信→解析→落库链路只靠人工注入 .eml 验证）
 
 ## 五、已知限制与陷阱
 
@@ -127,6 +155,8 @@ Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCC
 | Lazy schema 是禁止的 | 数据库改动必须走 `packages/db/migrations/`，不允许在业务代码里做字段兼容（见 AGENTS.md） |
 | 仓库路径含中文 | 不要把它传给 `cmd`；脚本一律用相对路径 |
 | 本地发信 | 本地 dev 不真正投递邮件，未配置绑定时 `POST /api/user/send` 返回 503 `mail_not_configured`；发信依赖部署后的 `send_email` |
+| 旧会话过渡 | 部署 §3.8 之前签发的 JWT 没有 `pv` 指纹，仍会放行一次；用户重新登录后即带上指纹，之后改密码可正常吊销 |
+| 收信延迟 | 关键持久化已改为同步，每封邮件会增加 R2/Queue/D1 的往返延迟（换取「不静默丢信」） |
 | 定时清理依赖 cron | `scheduled` 只在部署后由 Cloudflare 触发，本地 `wrangler dev` 不会自动跑；清理逻辑可被直接调用（测试即如此） |
 
 ## 六、快速核对
