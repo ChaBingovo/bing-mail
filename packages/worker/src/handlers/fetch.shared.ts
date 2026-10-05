@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json } from "../http";
-import { getBearerToken, verifyJwt, type JwtPayload } from "../auth";
+import { getBearerToken, passwordVersionMatches, verifyJwt, type JwtPayload } from "../auth";
 
 export function isUniqueViolation(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -213,6 +213,76 @@ export function decodeCursor(cursor: string | null) {
   return { receivedAt, id };
 }
 
+export type MessageListRow = {
+  id: string;
+  status: MessageStatus;
+  from_name: string | null;
+  from_address: string | null;
+  subject: string | null;
+  snippet: string | null;
+  received_at: number;
+  ai_code?: string | null;
+  ai_service?: string | null;
+};
+
+export type MessageListPage = {
+  messages: {
+    id: string;
+    status: MessageStatus;
+    fromName: string | null;
+    fromAddress: string | null;
+    subject: string | null;
+    snippet: string | null;
+    receivedAt: number;
+    aiCode: string | null;
+    aiService: string | null;
+  }[];
+  nextCursor: string | null;
+};
+
+/**
+ * One keyset-paginated page of a mailbox, newest first.
+ *
+ * `/api/user/messages` and `/api/mailboxes/:address/messages` had drifted into two
+ * near-identical copies of this query; both now call this so a fix cannot land in
+ * only one of them.
+ */
+export async function listMessagesPage(
+  env: Env,
+  mailboxId: string,
+  limit: number,
+  cursor: { receivedAt: number; id: string } | null,
+): Promise<MessageListPage> {
+  const columns =
+    "id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1";
+  const res = cursor
+    ? await env.DB.prepare(
+        `SELECT ${columns} AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2`,
+      )
+        .bind(mailboxId, limit, cursor.receivedAt, cursor.id)
+        .all<MessageListRow>()
+    : await env.DB.prepare(`SELECT ${columns} ORDER BY received_at DESC, id DESC LIMIT ?2`)
+        .bind(mailboxId, limit)
+        .all<MessageListRow>();
+
+  const rows = res.results || [];
+  const last = rows[rows.length - 1];
+  return {
+    messages: rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      fromName: r.from_name,
+      fromAddress: r.from_address,
+      subject: r.subject,
+      snippet: r.snippet,
+      receivedAt: r.received_at,
+      aiCode: r.ai_code ?? null,
+      aiService: r.ai_service ?? null,
+    })),
+    nextCursor: rows.length >= limit && last ? encodeCursor(last.received_at, last.id) : null,
+  };
+}
+
 const MAX_SEARCH_QUERY_LENGTH = 200;
 
 /**
@@ -292,6 +362,42 @@ export async function authRateReset(env: Env, key: string) {
     const id = env.AUTH_RATE.idFromName(key);
     const stub = env.AUTH_RATE.get(id);
     await stub.fetch("https://auth-rate/reset", { method: "POST" });
+  } catch {}
+}
+
+/** Default outbound messages per day per account. */
+const DEFAULT_SEND_DAILY_LIMIT = 200;
+
+function sendDailyLimit(env: Env) {
+  const raw = Number(env.SEND_DAILY_LIMIT || String(DEFAULT_SEND_DAILY_LIMIT));
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_SEND_DAILY_LIMIT;
+}
+
+/**
+ * Outbound quota. Counts live in the same Durable Object as login throttling but
+ * under a `send:<userId>` key and a 24h window, and a counter failure fails open:
+ * a broken DO must not stop the user from sending mail.
+ */
+export async function sendRateCheck(env: Env, userId: string) {
+  const limit = sendDailyLimit(env);
+  try {
+    const id = env.AUTH_RATE.idFromName(`send:${userId}`);
+    const stub = env.AUTH_RATE.get(id);
+    const res = await stub.fetch(`https://auth-rate/check?windowMs=${24 * 60 * 60 * 1000}&limit=${limit}`, {
+      method: "POST",
+    });
+    const data = (await res.json()) as { limited?: unknown; count?: unknown };
+    return { limited: data?.limited === true, count: Number(data?.count) || 0, limit };
+  } catch {
+    return { limited: false, count: 0, limit };
+  }
+}
+
+export async function sendRateRecord(env: Env, userId: string) {
+  try {
+    const id = env.AUTH_RATE.idFromName(`send:${userId}`);
+    const stub = env.AUTH_RATE.get(id);
+    await stub.fetch(`https://auth-rate/fail?windowMs=${24 * 60 * 60 * 1000}`, { method: "POST" });
   } catch {}
 }
 
@@ -439,12 +545,77 @@ export async function requireMessageAccess(env: Env, auth: { sub: string; isAdmi
   return row;
 }
 
+/**
+ * Read state lives on the mailbox so it follows the account across devices.
+ * `since` is only a fallback for the pre-0010 browser-local value.
+ */
+export async function getMailboxReadState(env: Env, mailboxId: string) {
+  const row = await env.DB.prepare("SELECT last_read_at FROM mailboxes WHERE id = ?1 LIMIT 1")
+    .bind(mailboxId)
+    .first<{ last_read_at: number | null }>();
+  return Number(row?.last_read_at) || 0;
+}
+
+/** Moves the read marker forward only; a stale or older marker is ignored. */
+export async function markMailboxRead(env: Env, mailboxId: string, receivedAt: number) {
+  const next = Math.max(Math.floor(receivedAt) || 0, 0);
+  if (next <= 0) return 0;
+  await env.DB.prepare(
+    "UPDATE mailboxes SET last_read_at = ?2 WHERE id = ?1 AND (last_read_at IS NULL OR last_read_at < ?2)",
+  )
+    .bind(mailboxId, next)
+    .run();
+  return getMailboxReadState(env, mailboxId);
+}
+
+export type MailboxUnread = {
+  newCount: number;
+  latestReceivedAt: number | null;
+  latestNewReceivedAt: number | null;
+};
+
+/** Unread counts are derived server-side from the mailbox read marker. */
+export async function getMailboxUnread(env: Env, mailboxId: string): Promise<MailboxUnread> {
+  const since = await getMailboxReadState(env, mailboxId);
+
+  const stat = await env.DB.prepare(
+    "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND received_at > ?2",
+  )
+    .bind(mailboxId, since)
+    .first<{ new_count: number; latest_new_received_at: number | null }>();
+
+  const latest = await env.DB.prepare("SELECT MAX(received_at) AS latest_received_at FROM messages WHERE mailbox_id = ?1")
+    .bind(mailboxId)
+    .first<{ latest_received_at: number | null }>();
+
+  return {
+    newCount: stat?.new_count ?? 0,
+    latestReceivedAt: latest?.latest_received_at ?? null,
+    latestNewReceivedAt: stat?.latest_new_received_at ?? null,
+  };
+}
+
+/**
+ * Rejects a token whose password fingerprint no longer matches the account, which
+ * is how a password change (by the user or an admin) revokes existing sessions.
+ * The lookup is skipped for legacy tokens without a fingerprint.
+ */
+async function sessionStillValid(env: Env, payload: JwtPayload) {
+  if (!payload.pv) return true;
+  const row = await env.DB.prepare("SELECT password_hash FROM users WHERE id = ?1 LIMIT 1")
+    .bind(payload.sub)
+    .first<{ password_hash: string }>();
+  if (!row?.password_hash) return false;
+  return passwordVersionMatches(payload, row.password_hash);
+}
+
 export async function requireAuth(request: Request, env: Env) {
   if (!hasJwtSecret(env)) return null;
   const token = getBearerToken(request) || getSessionTokenFromCookie(request);
   if (!token) return null;
   const payload = await verifyJwtWithEnv(token, env);
   if (!payload) return null;
+  if (!(await sessionStillValid(env, payload))) return null;
   return payload;
 }
 
@@ -454,6 +625,7 @@ export async function requireAuthWs(request: Request, env: Env) {
   if (!token) return null;
   const payload = await verifyJwtWithEnv(token, env);
   if (!payload) return null;
+  if (!(await sessionStillValid(env, payload))) return null;
   return payload;
 }
 

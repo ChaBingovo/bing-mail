@@ -156,48 +156,8 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
-    const cur = S.decodeCursor(url.searchParams.get("cursor"));
-    let res: D1Result<{
-      id: string;
-      status: S.MessageStatus;
-      from_name: string | null;
-      from_address: string | null;
-      subject: string | null;
-      snippet: string | null;
-      received_at: number;
-      ai_code?: string | null;
-      ai_service?: string | null;
-    }>;
-    if (cur) {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit, cur.receivedAt, cur.id)
-        .all();
-    } else {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
-    }
-
-    const last = res.results[res.results.length - 1];
-    const nextCursor = res.results.length >= limit && last ? S.encodeCursor(last.received_at, last.id) : null;
-    return json({
-      messages: res.results.map((r) => ({
-        id: r.id,
-        status: r.status,
-        fromName: r.from_name,
-        fromAddress: r.from_address,
-        subject: r.subject,
-        snippet: r.snippet,
-        receivedAt: r.received_at,
-        aiCode: r.ai_code ?? null,
-        aiService: r.ai_service ?? null,
-      })),
-      nextCursor,
-    });
+    const page = await S.listMessagesPage(env, mailbox.id, limit, S.decodeCursor(url.searchParams.get("cursor")));
+    return json(page);
   }
 
   const redDotMatch = pathname.match(/^\/api\/mailboxes\/([^/]+)\/red-dot$/);
@@ -209,29 +169,33 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     const mailbox = await S.requireMailboxAccess(env, auth, address);
     if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
 
-    const sinceRaw = url.searchParams.get("since") || "0";
-    const since = Math.max(Number(sinceRaw) || 0, 0);
-
-    const stat = await env.DB.prepare(
-      "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND received_at > ?2",
-    )
-      .bind(mailbox.id, since)
-      .first<{ new_count: number; latest_new_received_at: number | null }>();
-
-    const latest = await env.DB.prepare("SELECT MAX(received_at) AS latest_received_at FROM messages WHERE mailbox_id = ?1")
-      .bind(mailbox.id)
-      .first<{ latest_received_at: number | null }>();
+    const since = await S.getMailboxReadState(env, mailbox.id);
+    const unread = await S.getMailboxUnread(env, mailbox.id);
 
     return json(
-      {
-        address,
-        since,
-        newCount: stat?.new_count ?? 0,
-        latestReceivedAt: latest?.latest_received_at ?? null,
-        latestNewReceivedAt: stat?.latest_new_received_at ?? null,
-      },
+      { address, since, ...unread },
       { headers: { "cache-control": "no-store" } },
     );
+  }
+
+  const readMatch = pathname.match(/^\/api\/mailboxes\/([^/]+)\/read$/);
+  if (readMatch && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+    const address = decodeURIComponent(readMatch[1]).trim().toLowerCase();
+    const mailbox = await S.requireMailboxAccess(env, auth, address);
+    if (!mailbox?.id) return json({ error: "mailbox_not_found" }, { status: 404 });
+
+    const body = await S.readJsonBody(request);
+    const receivedAt = S.getNumberField(body, "receivedAt");
+    if (typeof receivedAt !== "number" || !Number.isFinite(receivedAt)) {
+      return json({ error: "invalid_payload" }, { status: 400 });
+    }
+
+    const since = await S.markMailboxRead(env, mailbox.id, receivedAt);
+    const unread = await S.getMailboxUnread(env, mailbox.id);
+    return json({ address, since, ...unread }, { headers: { "cache-control": "no-store" } });
   }
 
   if (pathname === "/api/media/proxy" && request.method === "GET") {
@@ -284,6 +248,11 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
       .first<{ r2_raw_key: string }>();
     if (!raw?.r2_raw_key) return json({ error: "raw_missing" }, { status: 409 });
 
+    // A retry re-reads the raw mail, so a missing R2 object would fail again. Check
+    // before resetting the row instead of sending the user into a second failure.
+    const rawObject = await env.MAIL_BUCKET.head(raw.r2_raw_key);
+    if (!rawObject) return json({ error: "raw_missing" }, { status: 409 });
+
     // Reset the row first (status-guarded, so a concurrent retry loses cleanly) and
     // only then enqueue; the consumer re-reads the raw mail from R2, so nothing is
     // duplicated. A failed enqueue is rolled back to FAILED rather than leaving a
@@ -312,6 +281,50 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
   }
 
   const msgMetaMatch = pathname.match(/^\/api\/messages\/([^/]+)$/);
+  const msgMetaMatchDelete = msgMetaMatch;
+
+  if (msgMetaMatchDelete && request.method === "DELETE") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+    const id = decodeURIComponent(msgMetaMatchDelete[1]);
+    const requestId = (request.headers.get("x-request-id") || "").trim() || crypto.randomUUID();
+
+    const row = await S.requireMessageAccess(env, auth, id);
+    if (!row) return json({ error: "message_not_found" }, { status: 404 });
+
+    // R2 first, D1 second — the same ordering the retention sweep uses. If the R2
+    // delete fails the row survives and the daily cron retries it, so a failure
+    // cannot orphan the message. Deleting the other way round would leave bytes
+    // nobody references.
+    const keys = [row.r2_raw_key, row.html_r2_key].filter((k): k is string => typeof k === "string" && k.length > 0);
+    const attachments = await env.DB.prepare("SELECT r2_key FROM message_attachments WHERE message_id = ?1")
+      .bind(id)
+      .all<{ r2_key: string }>();
+    for (const attachment of attachments.results || []) {
+      if (attachment.r2_key) keys.push(attachment.r2_key);
+    }
+
+    if (keys.length > 0) {
+      try {
+        await env.MAIL_BUCKET.delete(keys);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logError({ event: "message_delete_r2_failed", requestId, messageId: id, error: message });
+        return json({ error: "delete_failed" }, { status: 502 });
+      }
+    }
+
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM messages_fts WHERE message_id = ?1").bind(id),
+      env.DB.prepare("DELETE FROM message_attachments WHERE message_id = ?1").bind(id),
+      env.DB.prepare("DELETE FROM messages WHERE id = ?1").bind(id),
+    ]);
+
+    logInfo({ event: "message_deleted", requestId, messageId: id, userId: auth.sub });
+    return text("", { status: 204 });
+  }
+
   if (msgMetaMatch && request.method === "GET") {
     const authRes = await S.requireAuthOr401(request, env);
     if (authRes instanceof Response) return authRes;
@@ -319,6 +332,19 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
     const id = decodeURIComponent(msgMetaMatch[1]);
     const row = await S.requireMessageAccess(env, auth, id);
     if (!row) return json({ error: "message_not_found" }, { status: 404 });
+
+    const attachments = await env.DB.prepare(
+      "SELECT id, filename, content_type, size, content_id, is_inline FROM message_attachments WHERE message_id = ?1 ORDER BY created_at ASC",
+    )
+      .bind(id)
+      .all<{
+        id: string;
+        filename: string;
+        content_type: string;
+        size: number;
+        content_id: string | null;
+        is_inline: number;
+      }>();
 
     return json({
       message: {
@@ -335,8 +361,96 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         hasHtml: Boolean(row.html_inline || row.html_r2_key),
         aiCode: row.ai_code ?? null,
         aiService: row.ai_service ?? null,
+        attachments: (attachments.results || []).map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          contentType: a.content_type,
+          size: a.size,
+          contentId: a.content_id,
+          isInline: Boolean(a.is_inline),
+          url: `/api/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(a.id)}`,
+        })),
       },
     });
+  }
+
+  const msgAttachmentsMatch = pathname.match(/^\/api\/messages\/([^/]+)\/attachments$/);
+  if (msgAttachmentsMatch && request.method === "GET") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+    const id = decodeURIComponent(msgAttachmentsMatch[1]);
+    const row = await S.requireMessageAccess(env, auth, id);
+    if (!row) return json({ error: "message_not_found" }, { status: 404 });
+
+    const res = await env.DB.prepare(
+      "SELECT id, filename, content_type, size, content_id, is_inline FROM message_attachments WHERE message_id = ?1 ORDER BY created_at ASC",
+    )
+      .bind(id)
+      .all<{
+        id: string;
+        filename: string;
+        content_type: string;
+        size: number;
+        content_id: string | null;
+        is_inline: number;
+      }>();
+
+    return json({
+      attachments: (res.results || []).map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.content_type,
+        size: a.size,
+        contentId: a.content_id,
+        isInline: Boolean(a.is_inline),
+        url: `/api/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(a.id)}`,
+      })),
+    });
+  }
+
+  const msgAttachmentMatch = pathname.match(/^\/api\/messages\/([^/]+)\/attachments\/([^/]+)$/);
+  if (msgAttachmentMatch && request.method === "GET") {
+    const auth = await S.requireAuth(request, env);
+    if (!auth) return text("", { status: 401 });
+    const id = decodeURIComponent(msgAttachmentMatch[1]);
+    const attachmentId = decodeURIComponent(msgAttachmentMatch[2]);
+    const row = await S.requireMessageAccess(env, auth, id);
+    if (!row) return text("", { status: 404 });
+
+    const attachment = await env.DB.prepare(
+      "SELECT id, filename, content_type, r2_key, is_inline FROM message_attachments WHERE id = ?1 AND message_id = ?2 LIMIT 1",
+    )
+      .bind(attachmentId, id)
+      .first<{ id: string; filename: string; content_type: string; r2_key: string; is_inline: number }>();
+    if (!attachment?.r2_key) return text("", { status: 404 });
+
+    const object = await env.MAIL_BUCKET.get(attachment.r2_key);
+    if (!object?.body) return text("", { status: 404 });
+
+    // `inline=1` is only honoured for images: anything else must stay a download so
+    // a text/html attachment can never render in the origin.
+    const wantsInline = (url.searchParams.get("inline") || "") === "1";
+    const canInline = wantsInline && attachment.content_type.startsWith("image/");
+
+    const headers = new Headers();
+    headers.set("content-type", attachment.content_type);
+    headers.set("x-content-type-options", "nosniff");
+    headers.set("cache-control", "private, max-age=3600");
+    headers.set("content-security-policy", "sandbox; default-src 'none'");
+    if (canInline) {
+      headers.set("cross-origin-resource-policy", "same-site");
+    } else {
+      // RFC 5987 filename* keeps non-ASCII names working; the ASCII fallback is
+      // stripped of quotes so the header cannot be broken out of.
+      const asciiName = attachment.filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+      headers.set(
+        "content-disposition",
+        `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
+      );
+    }
+
+    return new Response(object.body, { status: 200, headers });
   }
 
   const msgTextMatch = pathname.match(/^\/api\/messages\/([^/]+)\/text$/);

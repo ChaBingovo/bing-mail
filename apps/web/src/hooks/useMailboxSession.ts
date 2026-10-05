@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createResource, createSignal } from "solid-js";
-import { appendPage, listMessages, mergeFirstPage, type MessagePage } from "../services/messagePages";
+import { appendPage, dropMessage, listMessages, mergeFirstPage, type MessagePage } from "../services/messagePages";
 import type { AppContextValue } from "../context/AppContext";
-import type { MessageDetail, MessageMeta } from "../types";
-import { getLastSeen, setLastSeen } from "../services/lastSeen";
+import type { MessageDetail, MessageMeta, RedDotResponse } from "../types";
+import { clearLastSeen, getLastSeen } from "../services/lastSeen";
 
 export function useMailboxSession(app: AppContextValue, getIsVisible: () => boolean) {
   const [displayAddress, setDisplayAddress] = createSignal("");
@@ -117,11 +117,30 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     return data.message;
   });
 
+  /** Server-owned read marker; `since` in the red-dot response is authoritative. */
+  const [readMarker, setReadMarker] = createSignal(0);
+  /** Highest receivedAt seen locally, used to advance the read marker. */
+  const [observedMax, setObservedMax] = createSignal(0);
+  /** Guards the one-time upload of the legacy browser-local marker. */
+  let legacyMarkerPushed = false;
+
   /** Re-queue a FAILED message for parsing; refreshes both the row and the list. */
   const retryMessage = async (id: string) => {
     await app.api.apiJson(`/api/messages/${encodeURIComponent(id)}/retry`, { method: "POST" });
     void refetchDetail();
     void refetchMessages();
+  };
+
+  /** Deletes a message and drops it from the local list without a full refetch. */
+  const deleteMessage = async (id: string) => {
+    await app.api.apiText(`/api/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (app.selectedId() === id) app.setSelectedId(null);
+    dropLocalMessage(id);
+    void refetchMessages();
+  };
+
+  const dropLocalMessage = (id: string) => {
+    setMorePages((pages) => dropMessage(pages, id));
   };
 
   const [html] = createResource(selectedId, async (id) => {
@@ -138,14 +157,54 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     if (app.page() !== "inbox") return;
     const addr = activeOwnedAddress();
     const list = displayedMessages();
-    if (!addr || !getIsVisible() || list.length === 0) return;
+    if (!addr || !list.length) return;
+
     const max = list.reduce((acc, m) => Math.max(acc, m.receivedAt || 0), 0);
-    if (!max) return;
-    if (max > getLastSeen(addr)) setLastSeen(addr, max);
+    if (max > observedMax()) setObservedMax(max);
     app.setUnseen(addr, 0);
   });
 
+  // One-time migration: browsers that only knew the localStorage marker push it to
+  // the server so already-read mail does not reappear as unread.
+  createEffect(() => {
+    const addr = activeOwnedAddress();
+    if (!addr || getIsVisible() || legacyMarkerPushed) return;
+    if (app.page() !== "inbox") return;
+    legacyMarkerPushed = true;
+    const legacy = getLastSeen(addr);
+    if (legacy <= 0) return;
+    void app.api
+      .apiJson<RedDotResponse>("/api/user/read", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ receivedAt: legacy }),
+      })
+      .then((data) => {
+        setReadMarker(data.since || 0);
+        clearLastSeen(addr);
+      })
+      .catch(() => undefined);
+  });
+
+  // Advance the server marker once the visible list has settled.
+  createEffect(() => {
+    const addr = activeOwnedAddress();
+    const max = observedMax();
+    if (!addr || !getIsVisible() || app.page() !== "inbox") return;
+    if (max <= 0 || max <= readMarker()) return;
+    void app.api
+      .apiJson<RedDotResponse>("/api/user/read", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ receivedAt: max }),
+      })
+      .then((data) => setReadMarker(data.since || 0))
+      .catch(() => undefined);
+  });
+
   return {
+    readMarker,
+    setReadMarker,
     mailboxAddress,
     aliases,
     messages: displayedMessages,
@@ -160,6 +219,7 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     html,
     text,
     retryMessage,
+    deleteMessage,
     displayAddress,
     setDisplayAddress,
     activeOwnedAddress,

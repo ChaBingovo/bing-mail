@@ -18,3 +18,14 @@ export function setLastSeen(address: string, ts: number) {
   } catch {}
 }
 
+/**
+ * Drops the browser-local marker. Read state now lives on the mailbox row, so this
+ * value only exists to seed the server once for browsers that predate the change.
+ */
+export function clearLastSeen(address: string) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.removeItem(lastSeenKey(address));
+  } catch {}
+}
+

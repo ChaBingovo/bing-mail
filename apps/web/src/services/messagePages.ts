@@ -72,3 +72,16 @@ export function appendPage(loaded: MessagePage[], next: MessagePage): MessagePag
   };
   return pages;
 }
+
+/**
+ * Removes one message from every loaded page. Used after a delete so the row
+ * disappears immediately instead of waiting for the next poll; cursors are kept
+ * because deleting does not invalidate them.
+ */
+export function dropMessage(pages: MessagePage[], id: string): MessagePage[] {
+  const target = (id || "").trim();
+  if (!target) return pages;
+  return pages
+    .map((page) => ({ ...page, messages: page.messages.filter((m) => m.id !== target) }))
+    .filter((page) => page.messages.length > 0);
+}

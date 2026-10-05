@@ -1,6 +1,7 @@
 PRAGMA foreign_keys=OFF;
 
 DROP TABLE IF EXISTS messages_fts;
+DROP TABLE IF EXISTS message_attachments;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS sent_messages;
 DROP TABLE IF EXISTS blocked_senders;

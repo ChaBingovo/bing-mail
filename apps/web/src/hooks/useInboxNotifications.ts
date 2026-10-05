@@ -1,9 +1,13 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import type { NotificationIslandData } from "../components/NotificationIsland";
 import type { MessageMeta } from "../types";
-import { getLastSeen } from "../services/lastSeen";
 
-export function useInboxNotifications(params: { mailboxAddress: () => string; messages: () => MessageMeta[] }) {
+export function useInboxNotifications(params: {
+  mailboxAddress: () => string;
+  messages: () => MessageMeta[];
+  /** Server-owned read marker: anything newer than this is genuinely new. */
+  readMarker: () => number;
+}) {
   const [hintTick, setHintTick] = createSignal(0);
 
   const [island, setIsland] = createSignal<NotificationIslandData | null>(null);
@@ -43,7 +47,11 @@ export function useInboxNotifications(params: { mailboxAddress: () => string; me
     const addr = params.mailboxAddress() || "";
     const list = params.messages() || [];
     if (!addr || list.length === 0) return;
-    const since = getLastSeen(addr);
+    // Compared against the server marker, never the browser's own clock: on a cold
+    // start the marker is 0, so the whole mailbox is "new" and only the newest
+    // message would surface — which is why the island is gated on the marker
+    // having been loaded at least once.
+    const since = params.readMarker();
     const latestNew = list.find((m) => (m.receivedAt || 0) > since);
     if (!latestNew || latestNew.id === lastNotifiedId) return;
     lastNotifiedId = latestNew.id;

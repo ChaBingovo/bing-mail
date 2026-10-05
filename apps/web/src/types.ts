@@ -13,6 +13,16 @@ export type MessageMeta = {
   receivedAt?: number;
 };
 
+export type Attachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  contentId: string | null;
+  isInline: boolean;
+  url: string;
+};
+
 export type MessageDetail = {
   id: string;
   status: MessageStatus;
@@ -26,6 +36,7 @@ export type MessageDetail = {
   hasHtml: boolean;
   aiCode: string | null;
   aiService: string | null;
+  attachments?: Attachment[];
 };
 
 export type RedDotResponse = {

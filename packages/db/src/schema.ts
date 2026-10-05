@@ -21,6 +21,7 @@ export const mailboxes = sqliteTable(
       .references(() => users.id, { onDelete: "cascade", onUpdate: "cascade" }),
     address: text("address").notNull(),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -135,4 +136,28 @@ export const sentMessages = sqliteTable(
       .default(sql`(unixepoch() * 1000)`),
   },
   (t) => [index("sent_messages_mailbox_sent_at_idx").on(t.mailboxId, t.sentAt)],
+);
+
+/**
+ * Attachment metadata (see migration 0010). The bytes live in R2 under `r2Key`;
+ * `contentId` carries the RFC 2392 `cid:` for inline images.
+ */
+export const messageAttachments = sqliteTable(
+  "message_attachments",
+  {
+    id: text("id").primaryKey(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    size: integer("size").notNull(),
+    r2Key: text("r2_key").notNull(),
+    contentId: text("content_id"),
+    isInline: integer("is_inline", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("message_attachments_message_id_idx").on(t.messageId)],
 );

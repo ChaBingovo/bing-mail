@@ -56,12 +56,27 @@ function createDb(opts: { status?: string | null; owner?: string | null; rawKey?
   return { db, ops };
 }
 
-function createEnv(opts: { status?: string | null; owner?: string | null; rawKey?: string | null; changes?: number; failEnqueue?: boolean } = {}) {
+function createEnv(
+  opts: {
+    status?: string | null;
+    owner?: string | null;
+    rawKey?: string | null;
+    changes?: number;
+    failEnqueue?: boolean;
+    /** Simulates the R2 object having been swept while the row survived. */
+    objectMissing?: boolean;
+  } = {},
+) {
   const { db, ops } = createDb(opts);
   const queued: unknown[] = [];
   const env = {
     JWT_SECRET: SECRET,
     DB: db,
+    MAIL_BUCKET: {
+      async head() {
+        return opts.objectMissing ? null : { key: "raw/m1.eml", size: 10 };
+      },
+    },
     PARSE_QUEUE: {
       send: async (message: unknown) => {
         if (opts.failEnqueue) throw new Error("queue unavailable");
@@ -143,6 +158,17 @@ test("an unknown message is not found", async () => {
 
 test("a message whose raw mail is gone cannot be retried", async () => {
   const { env, ops, queued } = createEnv({ status: "FAILED", rawKey: null });
+  const res = await retry(env);
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).error).toBe("raw_missing");
+  expect(ops.length).toBe(0);
+  expect(queued.length).toBe(0);
+});
+
+test("a row whose R2 object was swept is refused instead of failing again", async () => {
+  // The row still points at a key, but the daily retention sweep already removed
+  // the object. Re-queuing would just burn another attempt, so the route checks R2.
+  const { env, ops, queued } = createEnv({ status: "FAILED", objectMissing: true });
   const res = await retry(env);
   expect(res.status).toBe(409);
   expect(((await res.json()) as any).error).toBe("raw_missing");

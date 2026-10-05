@@ -127,6 +127,7 @@ function ConsoleView() {
   const notifications = useInboxNotifications({
     mailboxAddress: () => session.mailboxAddress() || "",
     messages: () => session.messages() || [],
+    readMarker: () => session.readMarker(),
   });
 
   const sync = createMailSyncController({
@@ -135,6 +136,7 @@ function ConsoleView() {
     getIsVisible: isVisible,
     apiJson: app.api.apiJson,
     onUnreadChange: (address, count) => app.setUnseen(address, count),
+    onReadMarker: (since) => session.setReadMarker((current) => Math.max(current, since)),
     onHint: notifications.bumpHint,
     onRefetchRequested: () => session.refetchMessages(),
   });
@@ -263,6 +265,7 @@ function ConsoleView() {
               html={session.html() || ""}
               text={session.text() || ""}
               onRetry={(id) => session.retryMessage(id)}
+              onDelete={(id) => session.deleteMessage(id)}
             />
           </div>
         </Show>

@@ -92,6 +92,11 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
       return json({ error: "mail_not_configured" }, { status: 503 });
     }
 
+    // A stolen session must not become an outbound spam relay, so sends share the
+    // existing rate-limit Durable Object under a per-user key.
+    const sendCheck = await S.sendRateCheck(env, auth.sub);
+    if (sendCheck.limited) return json({ error: "rate_limited" }, { status: 429 });
+
     const id = crypto.randomUUID();
     const to = recipients.join(", ");
     const snippet = (textBody || htmlBody).replace(/\s+/g, " ").trim().slice(0, 140) || null;
@@ -110,6 +115,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
         html: htmlBody || undefined,
       });
       messageId = result?.messageId ?? null;
+      // Counted only once the provider accepted it, so a failed attempt does not
+      // eat the user's daily quota.
+      await S.sendRateRecord(env, auth.sub);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       logError({ event: "send_message_failed", requestId, error: reason });
@@ -193,49 +201,8 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     if (!mailbox?.id) return json({ messages: [], address: null });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
-    const cur = S.decodeCursor(url.searchParams.get("cursor"));
-    let res: D1Result<{
-      id: string;
-      status: S.MessageStatus;
-      from_name: string | null;
-      from_address: string | null;
-      subject: string | null;
-      snippet: string | null;
-      received_at: number;
-      ai_code?: string | null;
-      ai_service?: string | null;
-    }>;
-    if (cur) {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit, cur.receivedAt, cur.id)
-        .all();
-    } else {
-      res = await env.DB.prepare(
-        "SELECT id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
-      )
-        .bind(mailbox.id, limit)
-        .all();
-    }
-
-    const last = res.results[res.results.length - 1];
-    const nextCursor = res.results.length >= limit && last ? S.encodeCursor(last.received_at, last.id) : null;
-    return json({
-      address: mailbox.address,
-      messages: res.results.map((r) => ({
-        id: r.id,
-        status: r.status,
-        fromName: r.from_name,
-        fromAddress: r.from_address,
-        subject: r.subject,
-        snippet: r.snippet,
-        receivedAt: r.received_at,
-        aiCode: r.ai_code ?? null,
-        aiService: r.ai_service ?? null,
-      })),
-      nextCursor,
-    });
+    const page = await S.listMessagesPage(env, mailbox.id, limit, S.decodeCursor(url.searchParams.get("cursor")));
+    return json({ address: mailbox.address, ...page });
   }
 
   if (pathname === "/api/user/red-dot" && request.method === "GET") {
@@ -253,29 +220,34 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
       );
     }
 
-    const sinceRaw = url.searchParams.get("since") || "0";
-    const since = Math.max(Number(sinceRaw) || 0, 0);
-
-    const stat = await env.DB.prepare(
-      "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND received_at > ?2",
-    )
-      .bind(mailbox.id, since)
-      .first<{ new_count: number; latest_new_received_at: number | null }>();
-
-    const latest = await env.DB.prepare("SELECT MAX(received_at) AS latest_received_at FROM messages WHERE mailbox_id = ?1")
-      .bind(mailbox.id)
-      .first<{ latest_received_at: number | null }>();
+    const since = await S.getMailboxReadState(env, mailbox.id);
+    const unread = await S.getMailboxUnread(env, mailbox.id);
 
     return json(
-      {
-        address: mailbox.address,
-        since,
-        newCount: stat?.new_count ?? 0,
-        latestReceivedAt: latest?.latest_received_at ?? null,
-        latestNewReceivedAt: stat?.latest_new_received_at ?? null,
-      },
+      { address: mailbox.address, since, ...unread },
       { headers: { "cache-control": "no-store" } },
     );
+  }
+
+  if (pathname === "/api/user/read" && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string; address: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
+
+    const body = await S.readJsonBody(request);
+    const receivedAt = S.getNumberField(body, "receivedAt");
+    if (typeof receivedAt !== "number" || !Number.isFinite(receivedAt)) {
+      return json({ error: "invalid_payload" }, { status: 400 });
+    }
+
+    const since = await S.markMailboxRead(env, mailbox.id, receivedAt);
+    const unread = await S.getMailboxUnread(env, mailbox.id);
+    return json({ address: mailbox.address, since, ...unread }, { headers: { "cache-control": "no-store" } });
   }
 
   if (pathname === "/api/user/ws" && request.method === "GET") {
@@ -374,6 +346,76 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
     await env.DB.prepare("UPDATE mailbox_aliases SET is_active = 0 WHERE mailbox_id = ?1 AND address = ?2")
       .bind(mailbox.id, address)
+      .run();
+    return text("", { status: 204 });
+  }
+
+  if (pathname === "/api/user/blocked-senders" && request.method === "GET") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const mailbox = await env.DB.prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ senders: [] });
+
+    const res = await env.DB.prepare(
+      "SELECT sender, created_at FROM blocked_senders WHERE mailbox_id = ?1 ORDER BY created_at DESC",
+    )
+      .bind(mailbox.id)
+      .all<{ sender: string; created_at: number }>();
+
+    return json({
+      senders: (res.results || []).map((r) => ({ sender: r.sender, createdAt: r.created_at })),
+    });
+  }
+
+  if (pathname === "/api/user/blocked-senders" && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const body = await S.readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+    const sender = S.getLowerStringField(body, "sender") || "";
+    if (!S.isValidEmailAddress(sender)) return json({ error: "invalid_sender" }, { status: 400 });
+
+    const mailbox = await env.DB.prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
+
+    // The ingest path compares the lowercased envelope sender, so storing the
+    // normalised form is what makes the rule actually match.
+    try {
+      await env.DB.prepare("INSERT INTO blocked_senders (id, mailbox_id, sender) VALUES (?1, ?2, ?3)")
+        .bind(crypto.randomUUID(), mailbox.id, sender)
+        .run();
+    } catch (err) {
+      if (S.isUniqueViolation(err)) return json({ error: "sender_already_blocked" }, { status: 409 });
+      throw err;
+    }
+    return json({ sender }, { status: 201 });
+  }
+
+  if (pathname === "/api/user/blocked-senders" && request.method === "DELETE") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const body = await S.readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+    const sender = S.getLowerStringField(body, "sender") || "";
+    if (!sender) return json({ error: "invalid_sender" }, { status: 400 });
+
+    const mailbox = await env.DB.prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
+
+    await env.DB.prepare("DELETE FROM blocked_senders WHERE mailbox_id = ?1 AND sender = ?2")
+      .bind(mailbox.id, sender)
       .run();
     return text("", { status: 204 });
   }

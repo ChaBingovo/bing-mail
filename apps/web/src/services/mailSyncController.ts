@@ -1,5 +1,4 @@
 import type { RedDotResponse } from "../types";
-import { getLastSeen } from "./lastSeen";
 
 export type MailSyncController = {
   start: () => void;
@@ -13,6 +12,8 @@ export function createMailSyncController(params: {
   getIsVisible: () => boolean;
   apiJson: <T>(path: string, init?: RequestInit) => Promise<T>;
   onUnreadChange: (address: string, count: number) => void;
+  /** Server-reported read marker, so the UI can tell "new" from "history". */
+  onReadMarker?: (since: number) => void;
   onHint: () => void;
   onRefetchRequested: () => void;
 }) {
@@ -60,11 +61,13 @@ export function createMailSyncController(params: {
     }
     inflight = true;
 
-    const since = getLastSeen(address);
     try {
-      const data = await params.apiJson<RedDotResponse>(`/api/user/red-dot?since=${encodeURIComponent(String(since))}`);
+      // The read marker is owned by the server now, so nothing is sent along; the
+      // response reports the server's own marker plus the unread count it implies.
+      const data = await params.apiJson<RedDotResponse>("/api/user/red-dot");
       pollBackoffMs = 0;
       params.onUnreadChange(address, data.newCount);
+      params.onReadMarker?.(data.since || 0);
       if (data.newCount > 0 && params.getIsVisible()) {
         params.onHint();
         const now = Date.now();
