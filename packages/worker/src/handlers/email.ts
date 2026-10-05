@@ -11,7 +11,7 @@ function normalizeAddress(value: unknown) {
   return String(value).trim().toLowerCase();
 }
 
-export async function handleEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+export async function handleEmail(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) {
   const requestId = crypto.randomUUID();
   const to = normalizeAddress(message.to);
   const from = normalizeAddress(message.from);
@@ -60,58 +60,56 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, ct
   const rawKey = `archive/raw/${messageId}.eml`;
   logInfo({ event: "email_ingest_accept", requestId, messageId, mailboxId: target.id, userId: target.user_id || undefined });
 
-  ctx.waitUntil(
-    (async () => {
-      try {
-        const meta = {
-          httpMetadata: { contentType: "message/rfc822" },
-          customMetadata: { mailboxId: target.id, receivedAt: String(receivedAt) },
-        };
+  try {
+    const meta = {
+      httpMetadata: { contentType: "message/rfc822" },
+      customMetadata: { mailboxId: target.id, receivedAt: String(receivedAt) },
+    };
 
-        const rawSize = (message as any).rawSize;
-        const FixedLengthStreamCtor = (globalThis as any).FixedLengthStream;
-        if (typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 && typeof FixedLengthStreamCtor === "function") {
-          const fls = new FixedLengthStreamCtor(rawSize);
-          const piping = message.raw.pipeTo(fls.writable);
-          await Promise.all([piping, env.MAIL_BUCKET.put(rawKey, fls.readable, meta)]);
-        } else {
-          const buf = await new Response(message.raw).arrayBuffer();
-          await env.MAIL_BUCKET.put(rawKey, buf, meta);
-        }
-        // Order matters: enqueue BEFORE inserting the row. The row id is the job
-        // body, so if send() fails we have written nothing and can ask the sender
-        // to retry; the previous order left a PENDING row with no job to parse it.
-        await env.PARSE_QUEUE.send({ messageId });
-        logInfo({
-          event: "email_ingest_enqueued",
-          requestId,
-          messageId,
-          mailboxId: target.id,
-          userId: target.user_id || undefined,
-        });
+    const rawSize = (message as any).rawSize;
+    const FixedLengthStreamCtor = (globalThis as any).FixedLengthStream;
+    if (typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize > 0 && typeof FixedLengthStreamCtor === "function") {
+      const fls = new FixedLengthStreamCtor(rawSize);
+      const piping = message.raw.pipeTo(fls.writable);
+      await Promise.all([piping, env.MAIL_BUCKET.put(rawKey, fls.readable, meta)]);
+    } else {
+      const buf = await new Response(message.raw).arrayBuffer();
+      await env.MAIL_BUCKET.put(rawKey, buf, meta);
+    }
+    // Order matters: enqueue BEFORE inserting the row. The row id is the job
+    // body, so if send() fails we have written nothing and can ask the sender
+    // to retry; the previous order left a PENDING row with no job to parse it.
+    await env.PARSE_QUEUE.send({ messageId });
+    logInfo({
+      event: "email_ingest_enqueued",
+      requestId,
+      messageId,
+      mailboxId: target.id,
+      userId: target.user_id || undefined,
+    });
 
-        await env.DB.prepare(
-          "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
-        )
-          .bind(messageId, target.id, receivedAt, rawKey)
-          .run();
-        logInfo({
-          event: "email_ingest_stored",
-          requestId,
-          messageId,
-          mailboxId: target.id,
-          userId: target.user_id || undefined,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logError({ event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg });
-        // Nothing durable was recorded (the row is written last), so a temporary
-        // rejection is safe: the sending server will retry instead of the mail
-        // silently disappearing into a stuck PENDING row.
-        try {
-          message.setReject("Temporary failure, please retry");
-        } catch {}
-      }
-    })(),
-  );
+    await env.DB.prepare(
+      "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
+    )
+      .bind(messageId, target.id, receivedAt, rawKey)
+      .run();
+    logInfo({
+      event: "email_ingest_stored",
+      requestId,
+      messageId,
+      mailboxId: target.id,
+      userId: target.user_id || undefined,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError({ event: "email_ingest_failed", requestId, messageId, mailboxId: target.id, error: msg });
+    // These steps run on the synchronous path precisely so the rejection lands
+    // before the SMTP reply is written: inside ctx.waitUntil() the 250 would
+    // already have gone out and the sending server would never retry, silently
+    // losing the message. The row is written last, so nothing durable is left
+    // behind for a temporary rejection to conflict with.
+    try {
+      message.setReject("Temporary failure, please retry");
+    } catch {}
+  }
 }
