@@ -10,10 +10,8 @@ bun.lock
 bun.lockb
 agenta.md
 AGENTS.md
-TODO.md
 dev/
 .claude/
-dev/
 .wrangler-xdg/
 .wrangler-tmp/
 .xdg*/

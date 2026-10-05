@@ -9,7 +9,8 @@ on:
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.run_number != 1 }}
+    # No `run_number != 1` guard: it silently skipped the very first run after a
+    # fork/branch reset, which looked like a broken workflow.
     runs-on: ubuntu-latest
     permissions:
       contents: read
