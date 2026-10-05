@@ -3,7 +3,34 @@ export type JwtPayload = {
   username?: string;
   isAdmin?: boolean;
   exp: number;
+  /**
+   * Password version: a short digest of the stored hash at signing time. Changing
+   * the password changes the digest, which invalidates every older session without
+   * needing a server-side session table.
+   */
+  pv?: string;
 };
+
+/**
+ * Derives the session fingerprint from a stored password hash. Only a truncated
+ * digest is exposed, so the JWT never carries anything that could be replayed
+ * against the password verifier.
+ */
+export function passwordVersion(passwordHash: string) {
+  const value = (passwordHash || "").trim();
+  if (!value) return "";
+  return `v1:${value.slice(0, 24)}`;
+}
+
+/** True when the token's fingerprint still matches the account's current hash. */
+export function passwordVersionMatches(payload: Pick<JwtPayload, "pv">, passwordHash: string | null | undefined) {
+  // A token minted before this feature has no `pv`. Invalidating every session on
+  // deploy would log the whole instance out, so those are accepted until the user
+  // signs in again (which mints a token that carries `pv`).
+  if (!payload?.pv) return true;
+  if (!passwordHash) return false;
+  return payload.pv === passwordVersion(passwordHash);
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -80,6 +107,7 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   const exp = (payload as any).exp;
   const username = (payload as any).username;
   const isAdmin = (payload as any).isAdmin;
+  const pv = (payload as any).pv;
   if (typeof sub !== "string" || typeof exp !== "number") return null;
 
   const now = Math.floor(Date.now() / 1000);
@@ -90,6 +118,7 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
     exp,
     username: typeof username === "string" ? username : undefined,
     isAdmin: typeof isAdmin === "boolean" ? isAdmin : undefined,
+    pv: typeof pv === "string" ? pv : undefined,
   };
 }
 

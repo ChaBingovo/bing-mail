@@ -24,6 +24,8 @@ export type Env = {
   WS_MAX_CONNECTIONS?: string;
   LOGIN_FAIL_LIMIT?: string;
   LOGIN_FAIL_WINDOW_MS?: string;
+  /** Outbound messages per account per day. */
+  SEND_DAILY_LIMIT?: string;
   /** Days to keep inbound raw mail / sent history; 0 disables cleanup. */
   MAIL_RETENTION_DAYS?: string;
 };

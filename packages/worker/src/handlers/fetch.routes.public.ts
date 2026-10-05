@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json } from "../http";
-import { hashPassword, signJwt, verifyPassword } from "../auth";
+import { hashPassword, passwordVersion, signJwt, verifyPassword } from "../auth";
 import * as S from "./fetch.shared";
 
 export async function handlePublicRoutes(request: Request, env: Env, url: URL, pathname: string): Promise<Response | null> {
@@ -117,7 +117,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
-    const token = await signJwt({ sub: id, username, isAdmin: true, exp }, secret);
+    const token = await signJwt({ sub: id, username, isAdmin: true, exp, pv: passwordVersion(passwordHash) }, secret);
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);
     // Session lives in an HttpOnly cookie only: the token is deliberately not echoed
@@ -200,7 +200,7 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
     const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
-    const token = await signJwt({ sub: id, username, isAdmin: false, exp }, secret);
+    const token = await signJwt({ sub: id, username, isAdmin: false, exp, pv: passwordVersion(passwordHash) }, secret);
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);
     return json(
@@ -258,7 +258,10 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const isAdmin = Boolean(user.is_admin);
     const secret = S.getJwtSecret(env);
     if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
-    const token = await signJwt({ sub: user.id, username, isAdmin, exp }, secret);
+    const token = await signJwt(
+      { sub: user.id, username, isAdmin, exp, pv: passwordVersion(user.password_hash) },
+      secret,
+    );
     await Promise.all(keys.map((k) => S.authRateReset(env, k)));
     const secure = url.protocol === "https:";
     const maxAgeSec = exp - Math.floor(Date.now() / 1000);

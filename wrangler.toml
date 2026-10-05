@@ -23,6 +23,8 @@ PARSE_QUEUE_MAX_ATTEMPTS = "5"
 WS_MAX_CONNECTIONS = "3"
 LOGIN_FAIL_LIMIT = "5"
 LOGIN_FAIL_WINDOW_MS = "600000"
+# Outbound messages per account per day (enforced per user via the AUTH_RATE DO).
+SEND_DAILY_LIMIT = "200"
 # Days of mail (inbound raw + oversized HTML + sent history) kept before the cron
 # sweep deletes it. 0 disables cleanup. The `retention_days` D1 setting overrides this.
 MAIL_RETENTION_DAYS = "90"
