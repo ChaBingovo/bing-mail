@@ -21,6 +21,46 @@ export function toProxyImageSrc(src: string) {
 
 export type ExtractedHtml = { html: string; css: string };
 
+export type CidAttachment = {
+  contentId: string | null;
+  url: string;
+};
+
+/**
+ * Maps `src="cid:..."` to the same-origin attachment endpoint so inline images
+ * render without exposing the reader to the sender's server.
+ *
+ * Matching is done on the raw `cid:` reference (angle brackets and casing vary
+ * between clients), and only attachments that actually carry a Content-ID are
+ * considered. Unresolved references are left untouched rather than rewritten to a
+ * broken URL.
+ */
+export function rewriteCidSources(html: string, attachments: CidAttachment[]) {
+  const source = html || "";
+  if (!source || attachments.length === 0) return source;
+
+  const byCid = new Map<string, string>();
+  for (const attachment of attachments) {
+    const cid = normalizeCid(attachment.contentId);
+    if (cid && attachment.url) byCid.set(cid, attachment.url);
+  }
+  if (byCid.size === 0) return source;
+
+  return source.replace(/\bsrc\s*=\s*(?:"cid:([^"]*)"|'cid:([^']*)')/gi, (match, doubleQuoted, singleQuoted) => {
+    const raw = doubleQuoted ?? singleQuoted ?? "";
+    const url = byCid.get(normalizeCid(raw));
+    if (!url) return match;
+    const attribute = doubleQuoted !== undefined ? `"${url}"` : `'${url}'`;
+    return `src=${attribute}`;
+  });
+}
+
+/** Strips the optional angle brackets and lowercases, per RFC 2392 practice. */
+function normalizeCid(value: string | null | undefined) {
+  const v = (value || "").trim().replace(/^<|>$/g, "");
+  return v ? v.toLowerCase() : "";
+}
+
 /**
  * Splits an email document into body markup and the collected `<style>` CSS.
  *

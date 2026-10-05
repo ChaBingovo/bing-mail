@@ -30,6 +30,125 @@ function coerceNullableString(value: unknown) {
   return v ? v : null;
 }
 
+/** One attachment larger than this is skipped rather than failing the message. */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Total attachment bytes stored per message. */
+const MAX_ATTACHMENTS_TOTAL_BYTES = 25 * 1024 * 1024;
+
+export type StoredAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  r2Key: string;
+  contentId: string | null;
+  isInline: boolean;
+};
+
+/**
+ * Files each attachment in R2 and returns the rows to insert. Oversized items are
+ * skipped with a warning: a single bad attachment must not fail the whole parse,
+ * and `filename` is sanitised because it is used in the R2 key and later echoed in
+ * a Content-Disposition header.
+ */
+async function storeAttachments(
+  parsed: { attachments?: unknown },
+  messageId: string,
+  env: Env,
+  requestId: string,
+  mailboxId: string,
+): Promise<StoredAttachment[]> {
+  const list = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+  if (list.length === 0) return [];
+
+  const stored: StoredAttachment[] = [];
+  let total = 0;
+
+  for (const [index, raw] of list.entries()) {
+    const attachment = raw as {
+      filename?: unknown;
+      mimeType?: unknown;
+      contentId?: unknown;
+      disposition?: unknown;
+      content?: unknown;
+    };
+
+    const bytes = toAttachmentBytes(attachment.content);
+    if (!bytes || bytes.byteLength === 0) continue;
+    if (bytes.byteLength > MAX_ATTACHMENT_BYTES || total + bytes.byteLength > MAX_ATTACHMENTS_TOTAL_BYTES) {
+      logWarn({
+        event: "queue_attachment_skipped",
+        requestId,
+        messageId,
+        mailboxId,
+        error: "attachment exceeds the size cap",
+      });
+      continue;
+    }
+
+    const filename = sanitizeAttachmentFilename(attachment.filename, index);
+    const contentType =
+      typeof attachment.mimeType === "string" && attachment.mimeType.trim()
+        ? attachment.mimeType.trim().toLowerCase()
+        : "application/octet-stream";
+    const contentId = coerceNullableString(attachment.contentId);
+    const isInline = String(attachment.disposition || "").toLowerCase() === "inline";
+    const r2Key = `archive/attachments/${messageId}/${index}-${filename}`;
+
+    try {
+      await env.MAIL_BUCKET.put(r2Key, bytes, {
+        httpMetadata: { contentType },
+        customMetadata: { messageId, filename },
+      });
+    } catch (err) {
+      logWarn({
+        event: "queue_attachment_store_failed",
+        requestId,
+        messageId,
+        mailboxId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    total += bytes.byteLength;
+    stored.push({
+      id: crypto.randomUUID(),
+      filename,
+      contentType,
+      size: bytes.byteLength,
+      r2Key,
+      contentId,
+      isInline,
+    });
+  }
+
+  return stored;
+}
+
+/** postal-mime hands back ArrayBuffer for binary parts and string for text ones. */
+function toAttachmentBytes(content: unknown): Uint8Array | null {
+  if (content instanceof ArrayBuffer) return new Uint8Array(content);
+  if (ArrayBuffer.isView(content)) {
+    return new Uint8Array((content as ArrayBufferView).buffer, (content as ArrayBufferView).byteOffset, (content as ArrayBufferView).byteLength);
+  }
+  if (typeof content === "string") return new TextEncoder().encode(content);
+  return null;
+}
+
+/** Keeps the name useful while making it safe for an R2 key and a header. */
+export function sanitizeAttachmentFilename(raw: unknown, index: number) {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  const base = value ? value.split(/[\\/]/).pop() || "" : "";
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/["\\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  return cleaned || `attachment-${index}`;
+}
+
 function extractJsonObject(value: string) {
   const first = value.indexOf("{");
   const last = value.lastIndexOf("}");
@@ -271,6 +390,11 @@ async function processOne(messageId: string, env: Env, requestId: string) {
     const snippet = toSnippet(textPlain ?? subject);
     const parsedAt = Date.now();
 
+    // Attachments are parsed after the HTML branch so an oversized/odd attachment
+    // never blocks the body from being saved. Each one is stored in R2 and described
+    // in D1; totals are capped below to keep one message from filling the bucket.
+    const storedAttachments = await storeAttachments(parsed, messageId, env, requestId, row.mailbox_id);
+
     let aiCode: string | null = null;
     let aiService: string | null = null;
     const canUseAi = typeof (env as any).AI?.run === "function";
@@ -348,6 +472,36 @@ async function processOne(messageId: string, env: Env, requestId: string) {
       .bind(messageId, subject ?? "", textPlain ?? "")
       .run();
     logInfo({ event: "queue_fts_updated", requestId, messageId, mailboxId: row.mailbox_id, attempt });
+
+    // Attachments are recorded after the message row is SUCCESS. A retry replaces
+    // them rather than duplicating, and R2 puts above are idempotent by key.
+    if (storedAttachments.length > 0) {
+      await env.DB.prepare("DELETE FROM message_attachments WHERE message_id = ?1").bind(messageId).run();
+      await env.DB.batch(
+        storedAttachments.map((attachment) =>
+          env.DB.prepare(
+            "INSERT INTO message_attachments (id, message_id, filename, content_type, size, r2_key, content_id, is_inline) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+          ).bind(
+            attachment.id,
+            messageId,
+            attachment.filename,
+            attachment.contentType,
+            attachment.size,
+            attachment.r2Key,
+            attachment.contentId,
+            attachment.isInline ? 1 : 0,
+          ),
+        ),
+      );
+      logInfo({
+        event: "queue_attachments_saved",
+        requestId,
+        messageId,
+        mailboxId: row.mailbox_id,
+        attempt,
+        status: String(storedAttachments.length),
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const reason = msg.length > 800 ? msg.slice(0, 800) : msg;

@@ -43,6 +43,20 @@ export async function cleanupExpiredMail(env: Env, now = Date.now()): Promise<Cl
     if (row.r2_raw_key) keys.push(row.r2_raw_key);
     if (row.html_r2_key) keys.push(row.html_r2_key);
   }
+  // Attachment bytes live in R2 too; without this the sweep would drop the rows
+  // and leave every attachment orphaned in the bucket forever.
+  if (rows.length > 0) {
+    const ids = rows.map((row) => row.id);
+    const placeholders = ids.map((_, i) => `?${i + 1}`).join(", ");
+    const attachments = await env.DB.prepare(
+      `SELECT r2_key FROM message_attachments WHERE message_id IN (${placeholders})`,
+    )
+      .bind(...ids)
+      .all<{ r2_key: string }>();
+    for (const attachment of attachments.results || []) {
+      if (attachment.r2_key) keys.push(attachment.r2_key);
+    }
+  }
 
   if (keys.length > 0) {
     try {
@@ -59,6 +73,7 @@ export async function cleanupExpiredMail(env: Env, now = Date.now()): Promise<Cl
     await env.DB.batch(
       slice.flatMap((row) => [
         env.DB.prepare("DELETE FROM messages_fts WHERE message_id = ?1").bind(row.id),
+        env.DB.prepare("DELETE FROM message_attachments WHERE message_id = ?1").bind(row.id),
         env.DB.prepare("DELETE FROM messages WHERE id = ?1").bind(row.id),
       ]),
     );

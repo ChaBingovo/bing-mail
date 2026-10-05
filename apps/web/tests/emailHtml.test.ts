@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { extractHtmlAndCss, toProxyImageSrc } from "../src/utils/emailHtml";
+import { extractHtmlAndCss, rewriteCidSources, toProxyImageSrc } from "../src/utils/emailHtml";
 
 /** Minimal Document stand-in: only what extractHtmlAndCss touches. */
 function fakeDocument(styles: string[], bodyHtml: string) {
@@ -47,4 +47,49 @@ test("a parser failure degrades to the raw source instead of throwing", () => {
 test("an empty or missing document degrades cleanly", () => {
   expect(extractHtmlAndCss("", noDom)).toEqual({ html: "", css: "" });
   expect(extractHtmlAndCss(undefined as unknown as string, noDom)).toEqual({ html: "", css: "" });
+});
+
+const inlineImage = { contentId: "logo@example.com", url: "/api/messages/m1/attachments/a1?inline=1" };
+
+test("cid references resolve to the same-origin attachment endpoint", () => {
+  const html = '<p><img src="cid:logo@example.com"></p>';
+  expect(rewriteCidSources(html, [inlineImage])).toBe(
+    '<p><img src="/api/messages/m1/attachments/a1?inline=1"></p>',
+  );
+});
+
+test("cid matching tolerates angle brackets, case and single quotes", () => {
+  // The original quoting style is preserved so the surrounding markup is untouched.
+  for (const html of ['<img src="cid:LOGO@example.com">', '<img src="cid:<logo@example.com>">', '<img src="cid:Logo@Example.com">']) {
+    expect(rewriteCidSources(html, [inlineImage])).toContain('src="/api/messages/m1/attachments/a1?inline=1"');
+  }
+  expect(rewriteCidSources("<img src='cid:logo@example.com'>", [inlineImage])).toBe(
+    "<img src='/api/messages/m1/attachments/a1?inline=1'>",
+  );
+});
+
+test("an unresolved cid is left untouched rather than rewritten to a broken url", () => {
+  const html = '<img src="cid:missing@example.com">';
+  expect(rewriteCidSources(html, [inlineImage])).toBe(html);
+  expect(rewriteCidSources(html, [])).toBe(html);
+});
+
+test("attachments without a content id never match cid references", () => {
+  const html = '<img src="cid:logo@example.com">';
+  const noCid = [{ contentId: null, url: "/api/messages/m1/attachments/a1?inline=1" }];
+  expect(rewriteCidSources(html, noCid)).toBe(html);
+});
+
+test("non-src attributes and unrelated markup are untouched", () => {
+  const html = '<a href="cid:logo@example.com">link</a> <img data-x="cid:logo@example.com">';
+  expect(rewriteCidSources(html, [inlineImage])).toBe(html);
+});
+
+test("multiple cid images each resolve to their own attachment", () => {
+  const html = '<img src="cid:a@x.com"><img src="cid:b@x.com">';
+  const out = rewriteCidSources(html, [
+    { contentId: "a@x.com", url: "/api/messages/m1/attachments/a1?inline=1" },
+    { contentId: "b@x.com", url: "/api/messages/m1/attachments/a2?inline=1" },
+  ]);
+  expect(out).toBe('<img src="/api/messages/m1/attachments/a1?inline=1"><img src="/api/messages/m1/attachments/a2?inline=1">');
 });

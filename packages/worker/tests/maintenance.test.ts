@@ -14,6 +14,7 @@ function createEnv(
     sentChanges?: number;
     failDelete?: boolean;
     failBatch?: boolean;
+    attachmentKeys?: { r2_key: string }[];
   } = {},
 ) {
   const deletes: string[][] = [];
@@ -42,6 +43,9 @@ function createEnv(
           allCalls.push({ sql, bindings: stmt._bindings });
           if (sql.includes("FROM messages WHERE received_at")) {
             return { results: (opts.rows ?? []) as T[], success: true, meta: {} };
+          }
+          if (sql.includes("FROM message_attachments")) {
+            return { results: (opts.attachmentKeys ?? []) as T[], success: true, meta: {} };
           }
           return { results: [] as T[], success: true, meta: {} };
         },
@@ -87,20 +91,28 @@ test("expired mail is removed with its R2 objects, FTS rows and sent history", a
     { id: "m1", r2_raw_key: "raw/m1.eml", html_r2_key: "archive/html/m1.html" },
     { id: "m2", r2_raw_key: "raw/m2.eml", html_r2_key: null },
   ];
-  const { env, deletes, batches } = createEnv({ setting: "30", rows, sentChanges: 2 });
+  const { env, deletes, batches } = createEnv({
+    setting: "30",
+    rows,
+    sentChanges: 2,
+    attachmentKeys: [{ r2_key: "archive/attachments/m1/0-a.png" }],
+  });
 
   const result = await cleanupExpiredMail(env, NOW);
 
   expect(result.retentionDays).toBe(30);
   expect(result.messages).toBe(2);
-  expect(result.r2Objects).toBe(3);
+  // Raw + oversized HTML + the attachment that hangs off m1.
+  expect(result.r2Objects).toBe(4);
   expect(result.sentMessages).toBe(2);
   // One R2 delete call carrying only the keys that exist.
-  expect(deletes).toEqual([["raw/m1.eml", "archive/html/m1.html", "raw/m2.eml"]]);
+  expect(deletes).toEqual([["raw/m1.eml", "archive/html/m1.html", "raw/m2.eml", "archive/attachments/m1/0-a.png"]]);
   expect(batches.length).toBe(1);
-  expect(batches[0].length).toBe(4);
+  // fts + attachments + messages, per row.
+  expect(batches[0].length).toBe(6);
   expect(batches[0][0]).toContain("DELETE FROM messages_fts");
-  expect(batches[0][1]).toContain("DELETE FROM messages");
+  expect(batches[0][1]).toContain("DELETE FROM message_attachments");
+  expect(batches[0][2]).toContain("DELETE FROM messages");
 });
 
 test("the cutoff is derived from the retention window and the batch is bounded", async () => {
