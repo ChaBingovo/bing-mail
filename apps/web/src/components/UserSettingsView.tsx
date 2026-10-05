@@ -14,6 +14,44 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
   const [aliasDomain, setAliasDomain] = createSignal("");
   const [aliasError, setAliasError] = createSignal("");
 
+  const [blockedInput, setBlockedInput] = createSignal("");
+  const [blockedError, setBlockedError] = createSignal("");
+
+  const [blockedSenders, { refetch: refetchBlocked }] = createResource(async () => {
+    return props.api.apiJson<{ senders: { sender: string; createdAt: number }[] }>("/api/user/blocked-senders");
+  });
+
+  const addBlockedSender = async () => {
+    const sender = blockedInput().trim().toLowerCase();
+    if (!sender) return;
+    setBlockedError("");
+    try {
+      await props.api.apiJson("/api/user/blocked-senders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sender }),
+      });
+      setBlockedInput("");
+      void refetchBlocked();
+    } catch (err) {
+      setBlockedError(err instanceof Error ? err.message : "拉黑失败");
+    }
+  };
+
+  const removeBlockedSender = async (sender: string) => {
+    setBlockedError("");
+    try {
+      await props.api.apiText("/api/user/blocked-senders", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sender }),
+      });
+      void refetchBlocked();
+    } catch (err) {
+      setBlockedError(err instanceof Error ? err.message : "解除失败");
+    }
+  };
+
   const [aliases, { refetch: refetchAliases }] = createResource(async () => {
     return props.api.apiJson<{ aliases: string[]; maxAliases: number; mailbox: string }>("/api/user/aliases");
   });
@@ -139,6 +177,53 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
                 </div>
               )}
             </For>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div class="text-sm font-semibold text-zinc-100">黑名单发件人</div>
+          <div class="mt-1 text-xs text-zinc-500">被拉黑的地址发来的邮件会在收信入口直接拒收，不会进入收件箱。</div>
+
+          <div class="mt-4 flex gap-2">
+            <input
+              value={blockedInput()}
+              onInput={(e) => setBlockedInput(e.currentTarget.value)}
+              placeholder="spam@example.com"
+              class="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
+            <button
+              class="shrink-0 rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20"
+              onClick={addBlockedSender}
+            >
+              拉黑
+            </button>
+          </div>
+
+          <Show when={blockedError()}>
+            <div class="mt-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {blockedError()}
+            </div>
+          </Show>
+
+          <div class="mt-4 space-y-2">
+            <Show
+              when={(blockedSenders()?.senders || []).length > 0}
+              fallback={<div class="text-xs text-zinc-500">还没有拉黑的发件人。</div>}
+            >
+              <For each={blockedSenders()?.senders || []}>
+                {(item) => (
+                  <div class="flex items-center justify-between rounded-md bg-white/5 px-3 py-2">
+                    <div class="min-w-0 truncate text-sm text-zinc-200">{item.sender}</div>
+                    <button
+                      class="text-xs text-zinc-400 hover:text-zinc-200"
+                      onClick={() => removeBlockedSender(item.sender)}
+                    >
+                      解除
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
           </div>
         </div>
 
