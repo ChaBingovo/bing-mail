@@ -92,13 +92,7 @@ export function Sidebar(props: {
             <button
               type="button"
               aria-label="账号与收件箱筛选"
-              title={`${props.user.username} · ${filterLabel()} · ${
-                props.connectionState === "connected"
-                  ? "已连接 red-dot"
-                  : props.connectionState === "disconnected"
-                    ? "未连接 red-dot"
-                    : "正在连接 red-dot"
-              }`}
+              title={`${props.user.username} · ${filterLabel()}`}
               class="pressable spring-colors relative flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/10 text-zinc-200 hover:bg-white/20"
               classList={{ "ring-2 ring-indigo-400/40 bg-white/20": menuOpen() }}
               onClick={() => setMenuOpen((v) => !v)}
@@ -108,7 +102,14 @@ export function Sidebar(props: {
                 <path stroke-linecap="round" d="M5.5 19.5c1.5-3 4-4.5 6.5-4.5s5 1.5 6.5 4.5" />
               </svg>
               <span
-                class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-zinc-950"
+                title={
+                  props.connectionState === "connected"
+                    ? "在线"
+                    : props.connectionState === "disconnected"
+                      ? "离线"
+                      : "繁忙"
+                }
+                class="absolute bottom-0 right-0 h-2 w-2 rounded-full"
                 classList={{
                   "bg-emerald-400": props.connectionState === "connected",
                   "bg-amber-400": !props.connectionState || props.connectionState === "reconnecting",
