@@ -57,7 +57,7 @@ function encodeMimeHeader(value: string): string {
   return `=?UTF-8?B?${btoa(bin)}?=`;
 }
 
-function buildRawMime(payload: OutboundMailPayload, recipient: string): string {
+export function buildRawMime(payload: OutboundMailPayload, recipient: string): string {
   const messageId = `<${crypto.randomUUID()}@${extractDomainFromAddress(payload.from) || "localhost"}>`;
   const headers = [
     `From: ${payload.from}`,
@@ -184,4 +184,93 @@ export async function sendOutboundEmail(
   }
 
   throw new OutboundNotConfiguredError(provider);
+}
+
+export async function deliverInternalEmail(
+  env: Env,
+  params: {
+    targetMailboxId: string;
+    targetMailboxAddress: string;
+    toAddress: string;
+    fromAddress: string;
+    fromName?: string | null;
+    subject: string;
+    text?: string;
+    html?: string;
+    snippet: string | null;
+    now: number;
+  },
+): Promise<{ messageId: string }> {
+  const messageId = crypto.randomUUID();
+  const rawKey = `raw/${params.targetMailboxId}/${messageId}.eml`;
+  const rawMime = buildRawMime(
+    {
+      from: params.fromAddress,
+      to: [params.toAddress],
+      subject: params.subject,
+      text: params.text,
+      html: params.html,
+    },
+    params.toAddress,
+  );
+
+  if (env.MAIL_BUCKET && typeof env.MAIL_BUCKET.put === "function") {
+    await env.MAIL_BUCKET.put(rawKey, rawMime, {
+      httpMetadata: { contentType: "message/rfc822" },
+    });
+  }
+
+  let htmlInline: string | null = null;
+  let htmlR2Key: string | null = null;
+  const html = params.html || "";
+  if (html) {
+    const inlineLimit = Number(env.HTML_INLINE_LIMIT || "102400") || 102400;
+    const htmlBytes = new TextEncoder().encode(html).byteLength;
+    if (htmlBytes <= inlineLimit || !env.MAIL_BUCKET || typeof env.MAIL_BUCKET.put !== "function") {
+      htmlInline = html;
+    } else {
+      htmlR2Key = `html/${params.targetMailboxId}/${messageId}.html`;
+      await env.MAIL_BUCKET.put(htmlR2Key, html, {
+        httpMetadata: { contentType: "text/html; charset=utf-8" },
+      });
+    }
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO messages (id, mailbox_id, status, from_name, from_address, to_address, subject, snippet, received_at, r2_raw_key, text_plain, html_inline, html_r2_key, parsed_at, read_at) VALUES (?1, ?2, 'SUCCESS', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?8, NULL)",
+  )
+    .bind(
+      messageId,
+      params.targetMailboxId,
+      params.fromName ?? null,
+      params.fromAddress,
+      params.toAddress,
+      params.subject || null,
+      params.snippet,
+      params.now,
+      rawKey,
+      params.text || null,
+      htmlInline,
+      htmlR2Key,
+    )
+    .run();
+
+  await env.DB.prepare("INSERT INTO messages_fts (message_id, subject, body_text) VALUES (?1, ?2, ?3)")
+    .bind(messageId, params.subject || "", params.text || "")
+    .run()
+    .catch(() => undefined);
+
+  if (env.MAIL_EVENTS && typeof env.MAIL_EVENTS.idFromName === "function") {
+    try {
+      const id = env.MAIL_EVENTS.idFromName(params.targetMailboxAddress);
+      const stub = env.MAIL_EVENTS.get(id);
+      await stub.fetch("https://mail-events/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messageId, receivedAt: params.now }),
+      });
+    } catch {}
+  }
+
+  return { messageId };
 }

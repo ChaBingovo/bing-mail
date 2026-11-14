@@ -179,6 +179,8 @@ function ConsoleView() {
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });
 
+  const canCompose = () => Boolean(session.mailboxAddress());
+
   const getSpotlightActions = createSpotlightActionBuilder({
     app,
     mailbox: () => session.mailboxAddress() || "",
@@ -186,7 +188,7 @@ function ConsoleView() {
     displayAddress: session.displayAddress,
     setDisplayAddress: session.setDisplayAddress,
     messages: () => session.messages() || [],
-    canSend: () => session.canSend(),
+    canSend: canCompose,
   });
 
   /** Server-side FTS search for the Spotlight palette. */
@@ -259,7 +261,7 @@ function ConsoleView() {
       onRefresh={() => session.refetchMessages()}
       onLogout={() => app.logout()}
       onOpenSpotlight={() => setSpotlightOpen(true)}
-      canSend={session.canSend()}
+      canSend={canCompose()}
       connectionState={session.connectionState()}
     />
   );
@@ -289,6 +291,7 @@ function ConsoleView() {
                   userId={app.currentUser()?.id || ""}
                   mailbox={session.mailboxAddress() || ""}
                   aliases={session.aliases()?.aliases || []}
+                  canSendExternal={session.canSend()}
                   sendableAddresses={session.sendableAddresses()}
                   prefill={composePrefill()}
                   onConsumePrefill={() => setComposePrefill(null)}
@@ -300,7 +303,7 @@ function ConsoleView() {
                   api={app.api}
                   onResend={startResend}
                   onNewCompose={() => app.setPage("compose")}
-                  canSend={session.canSend()}
+                  canSend={canCompose()}
                 />
               </Show>
               <Show when={app.page() === "settings"}>
@@ -333,8 +336,8 @@ function ConsoleView() {
               detail={session.detail() || null}
               html={session.html() || ""}
               text={session.text() || ""}
-              onReply={session.canSend() ? startReply : undefined}
-              onForward={session.canSend() ? startForward : undefined}
+              onReply={canCompose() ? startReply : undefined}
+              onForward={canCompose() ? startForward : undefined}
               onToggleRead={(id, read) => void session.toggleMessageRead(id, read)}
               onRetry={(id) => session.retryMessage(id)}
               onDelete={(id) => session.deleteMessage(id)}

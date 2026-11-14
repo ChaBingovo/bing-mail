@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from "../auth";
 import { logError } from "../log";
 import {
   canDomainSend,
+  deliverInternalEmail,
   extractDomainFromAddress,
   normalizeSendProvider,
   OutboundNotConfiguredError,
@@ -127,7 +128,25 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
       .bind(fromDomain)
       .first<{ send_provider: string }>();
     const sendProvider = normalizeSendProvider(domainRow?.send_provider) ?? "none";
-    if (!canDomainSend(env, sendProvider)) {
+
+    // Partition recipients into in-system mailboxes/aliases vs external addresses.
+    // Internal recipients are delivered directly without requiring an external provider.
+    const internalTargets: Array<{ toAddress: string; targetMailboxId: string; targetMailboxAddress: string }> = [];
+    const externalRecipients: string[] = [];
+    for (const recipient of recipients) {
+      const target = await S.getMailboxAuth(env, recipient);
+      if (target?.id) {
+        internalTargets.push({
+          toAddress: recipient,
+          targetMailboxId: target.id,
+          targetMailboxAddress: target.address,
+        });
+      } else {
+        externalRecipients.push(recipient);
+      }
+    }
+
+    if (externalRecipients.length > 0 && !canDomainSend(env, sendProvider)) {
       return json({ error: "mail_not_configured" }, { status: 503 });
     }
 
@@ -146,14 +165,31 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     // "发送失败" and re-sends an already-delivered message.
     let messageId: string | null = null;
     try {
-      const result = await sendOutboundEmail(env, sendProvider, {
-        from,
-        to: recipients,
-        subject,
-        text: textBody || undefined,
-        html: htmlBody || undefined,
-      });
-      messageId = result.messageId;
+      for (const target of internalTargets) {
+        const delivered = await deliverInternalEmail(env, {
+          targetMailboxId: target.targetMailboxId,
+          targetMailboxAddress: target.targetMailboxAddress,
+          toAddress: target.toAddress,
+          fromAddress: from,
+          subject,
+          text: textBody || undefined,
+          html: htmlBody || undefined,
+          snippet,
+          now: sentAt,
+        });
+        if (!messageId) messageId = delivered.messageId;
+      }
+
+      if (externalRecipients.length > 0) {
+        const result = await sendOutboundEmail(env, sendProvider, {
+          from,
+          to: externalRecipients,
+          subject,
+          text: textBody || undefined,
+          html: htmlBody || undefined,
+        });
+        if (result.messageId) messageId = result.messageId;
+      }
       // Counted only once the provider accepted it, so a failed attempt does not
       // eat the user's daily quota.
       await S.sendRateRecord(env, auth.sub);

@@ -10,6 +10,7 @@ type DbOp = { sql: string; bindings: unknown[] };
 function createDb(
   opts: {
     mailbox?: { id: string; address: string } | null;
+    internalTarget?: { id: string; user_id: string; address: string } | null;
     alias?: boolean;
     aliases?: string[];
     sent?: unknown[];
@@ -31,6 +32,13 @@ function createDb(
           if (sql.includes("FROM mailboxes WHERE user_id")) {
             const mailbox = opts.mailbox === undefined ? MAILBOX : opts.mailbox;
             return mailbox as unknown as T;
+          }
+          if (sql.includes("FROM mailboxes WHERE address")) {
+            const addr = String(stmt._bindings[0] || "");
+            if (opts.internalTarget && opts.internalTarget.address === addr) {
+              return opts.internalTarget as unknown as T;
+            }
+            return null as unknown as T;
           }
           if (sql.includes("FROM mailbox_aliases")) {
             return (opts.alias ? { ok: 1 } : null) as unknown as T;
@@ -70,6 +78,7 @@ type SentCall = Record<string, unknown>;
 function createEnv(
   opts: {
     mailbox?: { id: string; address: string } | null;
+    internalTarget?: { id: string; user_id: string; address: string } | null;
     alias?: boolean;
     aliases?: string[];
     sent?: unknown[];
@@ -333,4 +342,18 @@ test("/api/user/mailbox reports canSend and per-domain sendableAddresses", async
     canSend: false,
     sendableAddresses: [],
   });
+});
+
+test("internal mailbox delivery succeeds even when send_provider=none and EMAIL binding is missing", async () => {
+  const { env, ops } = createEnv({
+    noBinding: true,
+    sendProvider: "none",
+    internalTarget: { id: "mb2", user_id: "u2", address: "bob@example.test" },
+  });
+  const res = await send(env, { to: "bob@example.test", subject: "Internal Hi", text: "hello bob" });
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as any;
+  expect(body.message.status).toBe("SENT");
+  expect(ops.some((o) => o.sql.includes("INSERT INTO messages "))).toBe(true);
+  expect(ops.some((o) => o.sql.includes("INSERT INTO sent_messages "))).toBe(true);
 });

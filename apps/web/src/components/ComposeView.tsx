@@ -25,6 +25,7 @@ export function ComposeView(props: {
   userId: string;
   mailbox: string;
   aliases: string[];
+  canSendExternal?: boolean;
   sendableAddresses?: string[];
   prefill?: ComposePrefill | null;
   onConsumePrefill?: () => void;
@@ -57,7 +58,7 @@ export function ComposeView(props: {
       const addr = (alias || "").trim().toLowerCase();
       if (addr && !out.includes(addr)) out.push(addr);
     }
-    if (props.sendableAddresses !== undefined) {
+    if (props.canSendExternal && props.sendableAddresses !== undefined) {
       const allowed = new Set(props.sendableAddresses.map((a) => a.trim().toLowerCase()).filter(Boolean));
       return out.filter((addr) => allowed.has(addr));
     }
@@ -286,6 +287,11 @@ export function ComposeView(props: {
           <div>
             <div class="text-lg font-semibold text-zinc-100">写邮件</div>
             <div class="mt-1 text-sm text-zinc-500">支持主邮箱或已启用别名发信，可切换纯文本与 Markdown 富文本。</div>
+            <Show when={!props.canSendExternal}>
+              <div class="mt-1.5 text-xs text-amber-300/90">
+                当前域名未配置外部发信商，仅支持发送至系统内邮箱或别名；如需发往外部邮箱请在管理员设置中配置发信服务。
+              </div>
+            </Show>
           </div>
           <div class="flex items-center gap-3">
             <Show when={draftSavedAt() !== null}>
