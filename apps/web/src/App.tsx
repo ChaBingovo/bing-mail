@@ -283,7 +283,7 @@ function ConsoleView() {
         <Show
           when={app.page() === "inbox"}
           fallback={
-            <div class="grid h-full grid-cols-[280px_1fr] gap-0">
+            <div class="grid h-full grid-cols-[216px_minmax(0,1fr)] gap-0 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[264px_minmax(0,1fr)]">
               {sidebar()}
               <Show when={app.page() === "compose"}>
                 <ComposeView
@@ -315,7 +315,7 @@ function ConsoleView() {
             </div>
           }
         >
-          <div class="grid h-full grid-cols-[280px_440px_1fr] gap-0">
+          <div class="grid h-full grid-cols-[216px_minmax(240px,34%)_minmax(0,1fr)] gap-0 lg:grid-cols-[240px_minmax(280px,340px)_minmax(0,1fr)] xl:grid-cols-[264px_380px_minmax(0,1fr)]">
             {sidebar()}
 
             <EmailList

@@ -64,7 +64,7 @@ export function Sidebar(props: {
   };
 
   return (
-    <aside class="flex h-full flex-col justify-between border-r border-white/10 bg-white/5 p-4">
+    <aside class="flex h-full min-w-0 flex-col justify-between border-r border-white/10 bg-white/5 p-4">
       <div class="min-h-0 flex-1 overflow-visible">
         <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">

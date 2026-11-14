@@ -17,7 +17,7 @@ export function EmailList(props: {
   markingAllRead?: boolean;
 }) {
   return (
-    <section class="h-full border-r border-white/10 bg-white/0 p-2">
+    <section class="h-full min-w-0 border-r border-white/10 bg-white/0 p-2">
       <div class="flex items-center justify-between gap-2 px-2 py-2 text-xs font-medium text-zinc-400">
         <span class="min-w-0 truncate">
           <Show when={props.mailboxAddress} fallback={"全部收件箱"}>

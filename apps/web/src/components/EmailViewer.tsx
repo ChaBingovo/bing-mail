@@ -60,13 +60,13 @@ export function EmailViewer(props: {
   };
 
   return (
-    <main class="h-full bg-white/0 p-4">
+    <main class="h-full min-w-0 overflow-hidden bg-white/0 p-4">
       <Show when={props.detail} fallback={<div class="text-sm text-zinc-500">选择一封邮件查看详情</div>}>
         {(d) => (
-          <div class="flex h-full flex-col gap-4">
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <div class="truncate text-base font-semibold text-zinc-100">{d().subject || "(无主题)"}</div>
+          <div class="flex h-full min-w-0 flex-col gap-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="break-words text-base font-semibold text-zinc-100">{d().subject || "(无主题)"}</div>
                 <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
                   <div class="text-zinc-400">{d().fromName || d().fromAddress || ""}</div>
                   <Show when={d().toAddress}>
@@ -84,7 +84,7 @@ export function EmailViewer(props: {
                   </Show>
                 </div>
               </div>
-              <div class="flex shrink-0 items-center gap-2">
+              <div class="flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2">
                 <Show when={Boolean(props.onReply && d().fromAddress)}>
                   <button
                     type="button"
