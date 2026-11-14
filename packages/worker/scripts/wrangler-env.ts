@@ -24,8 +24,11 @@ export const REL_PROJECT_ROOT = "../..";
 export function wranglerEnv(workerRoot: string) {
   const base = resolve(workerRoot, ".wrangler-xdg");
   mkdirSync(base, { recursive: true });
+  const rootNodeModules = resolve(workerRoot, "../../node_modules");
+  const nodePath = process.env.NODE_PATH ? `${rootNodeModules};${process.env.NODE_PATH}` : rootNodeModules;
   return {
     ...process.env,
+    NODE_PATH: nodePath,
     XDG_CONFIG_HOME: base,
     XDG_CACHE_HOME: resolve(base, "cache"),
     XDG_STATE_HOME: resolve(base, "state"),

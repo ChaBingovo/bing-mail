@@ -49,6 +49,52 @@ export function extractDomainFromAddress(address: string): string {
   return address.slice(at + 1).trim().toLowerCase();
 }
 
+function encodeMimeHeader(value: string): string {
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+  const bytes = new TextEncoder().encode(value);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return `=?UTF-8?B?${btoa(bin)}?=`;
+}
+
+function buildRawMime(payload: OutboundMailPayload, recipient: string): string {
+  const messageId = `<${crypto.randomUUID()}@${extractDomainFromAddress(payload.from) || "localhost"}>`;
+  const headers = [
+    `From: ${payload.from}`,
+    `To: ${recipient}`,
+    `Subject: ${encodeMimeHeader(payload.subject || "(no subject)")}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: ${messageId}`,
+    "MIME-Version: 1.0",
+  ];
+  const text = payload.text || "";
+  const html = payload.html || "";
+  if (text && html) {
+    const boundary = `bm_${crypto.randomUUID().replace(/-/g, "")}`;
+    return [
+      ...headers,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="utf-8"',
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      text,
+      `--${boundary}`,
+      'Content-Type: text/html; charset="utf-8"',
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      html,
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+  }
+  const contentType = html ? 'text/html; charset="utf-8"' : 'text/plain; charset="utf-8"';
+  return [...headers, `Content-Type: ${contentType}`, "Content-Transfer-Encoding: 8bit", "", html || text, ""].join(
+    "\r\n",
+  );
+}
+
 export async function sendOutboundEmail(
   env: Env,
   provider: SendProvider,
@@ -58,14 +104,33 @@ export async function sendOutboundEmail(
     if (!env.EMAIL || typeof env.EMAIL.send !== "function") {
       throw new OutboundNotConfiguredError("cloudflare");
     }
-    const result = await env.EMAIL.send({
-      from: payload.from,
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text || undefined,
-      html: payload.html || undefined,
-    });
-    return { messageId: result?.messageId ?? null };
+    try {
+      const result = await env.EMAIL.send({
+        from: payload.from,
+        to: payload.to,
+        subject: payload.subject,
+        text: payload.text || undefined,
+        html: payload.html || undefined,
+      });
+      return { messageId: result?.messageId ?? null };
+    } catch (err) {
+      // Older workerd runtimes (e.g. local wrangler@4.19.0 / compat 2025-05-25) only
+      // accept `EmailMessage(from, to, raw)` from `cloudflare:email` instead of the
+      // Email Service builder object. Fall back only when `cloudflare:email` exists.
+      const emailMod = await import("cloudflare:email").catch(() => null);
+      const EmailMessageCtor = (emailMod as { EmailMessage?: new (f: string, t: string, r: string) => EmailMessage } | null)
+        ?.EmailMessage;
+      if (!EmailMessageCtor || !(err instanceof TypeError || /EmailMessage|raw/i.test(String(err)))) {
+        throw err;
+      }
+      let lastId: string | null = null;
+      for (const recipient of payload.to) {
+        const msg = new EmailMessageCtor(payload.from, recipient, buildRawMime(payload, recipient));
+        const res = await env.EMAIL.send(msg);
+        if (res?.messageId) lastId = res.messageId;
+      }
+      return { messageId: lastId };
+    }
   }
 
   if (provider === "resend") {
