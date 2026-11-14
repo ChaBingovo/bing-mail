@@ -17,6 +17,7 @@ export function Sidebar(props: {
   onOpenSpotlight: () => void;
   canSend?: boolean;
   connectionState?: RedDotConnectionState;
+  onNavigate?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   let menuRootEl: HTMLDivElement | undefined;
@@ -61,6 +62,12 @@ export function Sidebar(props: {
     props.onSelectFilter(address);
     if (props.page !== "inbox") props.setPage("inbox");
     setMenuOpen(false);
+    props.onNavigate?.();
+  };
+
+  const goTo = (page: AppPage) => {
+    props.setPage(page);
+    props.onNavigate?.();
   };
 
   return (
@@ -189,7 +196,7 @@ export function Sidebar(props: {
           type="button"
           class="pressable spring-colors mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-400/25 bg-indigo-500/20 px-3 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/30"
           classList={{ "ring-2 ring-indigo-400/40 bg-indigo-500/30": props.page === "compose" }}
-          onClick={() => props.setPage("compose")}
+          onClick={() => goTo("compose")}
         >
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9" />
@@ -206,7 +213,10 @@ export function Sidebar(props: {
       <button
         type="button"
         class="spring-colors mt-3 flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-left text-sm font-semibold text-zinc-200 hover:bg-white/10"
-        onClick={props.onOpenSpotlight}
+        onClick={() => {
+          props.onNavigate?.();
+          props.onOpenSpotlight();
+        }}
       >
         <span>Spotlight 搜索</span>
         <span class="text-xs font-semibold text-zinc-500">Ctrl / ⌘ K</span>
@@ -217,7 +227,7 @@ export function Sidebar(props: {
           type="button"
           class="spring-colors w-full rounded-2xl px-3 py-2 text-left text-sm font-semibold text-zinc-200 hover:bg-white/5"
           classList={{ "bg-white/10": props.page === "inbox" }}
-          onClick={() => props.setPage("inbox")}
+          onClick={() => goTo("inbox")}
         >
           收件箱
         </button>
@@ -225,7 +235,7 @@ export function Sidebar(props: {
           type="button"
           class="spring-colors w-full rounded-2xl px-3 py-2 text-left text-sm font-semibold text-zinc-200 hover:bg-white/5"
           classList={{ "bg-white/10": props.page === "sent" }}
-          onClick={() => props.setPage("sent")}
+          onClick={() => goTo("sent")}
         >
           已发邮件
         </button>
@@ -233,7 +243,7 @@ export function Sidebar(props: {
           type="button"
           class="spring-colors w-full rounded-2xl px-3 py-2 text-left text-sm font-semibold text-zinc-200 hover:bg-white/5"
           classList={{ "bg-white/10": props.page === "settings" }}
-          onClick={() => props.setPage("settings")}
+          onClick={() => goTo("settings")}
         >
           账户设置
         </button>
@@ -242,7 +252,7 @@ export function Sidebar(props: {
               type="button"
               class="spring-colors w-full rounded-2xl px-3 py-2 text-left text-sm font-semibold text-zinc-200 hover:bg-white/5"
               classList={{ "bg-white/10": props.page === "admin" }}
-              onClick={() => props.setPage("admin")}
+              onClick={() => goTo("admin")}
             >
               管理员设置
             </button>

@@ -132,6 +132,7 @@ function ConsoleView() {
   const { isVisible } = useVisibility();
 
   const [spotlightOpen, setSpotlightOpen] = createSignal(false);
+  const [mobileNavOpen, setMobileNavOpen] = createSignal(false);
   const [composePrefill, setComposePrefill] = createSignal<ComposePrefill | null>(null);
   const session = useMailboxSession(app, isVisible);
   const notifications = useInboxNotifications({
@@ -263,11 +264,21 @@ function ConsoleView() {
       onOpenSpotlight={() => setSpotlightOpen(true)}
       canSend={canCompose()}
       connectionState={session.connectionState()}
+      onNavigate={() => setMobileNavOpen(false)}
     />
   );
 
+  const mobilePageTitle = () => {
+    const p = app.page();
+    if (p === "compose") return "写邮件";
+    if (p === "sent") return "已发邮件";
+    if (p === "settings") return "账户设置";
+    if (p === "admin") return "管理员设置";
+    return session.displayAddress() || "收件箱";
+  };
+
   return (
-    <div class="relative h-dvh w-full overflow-hidden p-4">
+    <div class="relative h-dvh w-full overflow-hidden p-2 sm:p-4">
       <Show when={notifications.island()}>
         <NotificationIsland data={notifications.island()!} closing={notifications.islandClosing()} onClose={notifications.closeIsland} />
       </Show>
@@ -279,71 +290,146 @@ function ConsoleView() {
         search={searchMessages}
       />
 
-      <div class="glass-shell h-full overflow-hidden rounded-[28px]">
-        <Show
-          when={app.page() === "inbox"}
-          fallback={
-            <div class="grid h-full grid-cols-[216px_minmax(0,1fr)] gap-0 lg:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[264px_minmax(0,1fr)]">
-              {sidebar()}
-              <Show when={app.page() === "compose"}>
-                <ComposeView
-                  api={app.api}
-                  userId={app.currentUser()?.id || ""}
-                  mailbox={session.mailboxAddress() || ""}
-                  aliases={session.aliases()?.aliases || []}
-                  canSendExternal={session.canSend()}
-                  sendableAddresses={session.sendableAddresses()}
-                  prefill={composePrefill()}
-                  onConsumePrefill={() => setComposePrefill(null)}
-                  onOpenSent={() => app.setPage("sent")}
-                />
-              </Show>
-              <Show when={app.page() === "sent"}>
-                <SentView
-                  api={app.api}
-                  onResend={startResend}
-                  onNewCompose={() => app.setPage("compose")}
-                  canSend={canCompose()}
-                />
-              </Show>
-              <Show when={app.page() === "settings"}>
-                <UserSettingsView user={app.currentUser()!} api={app.api} />
-              </Show>
-              <Show when={app.page() === "admin"}>
-                <AdminSettingsView api={app.api} onDomainsChanged={() => void session.refetchMailbox()} />
-              </Show>
-            </div>
-          }
-        >
-          <div class="grid h-full grid-cols-[216px_minmax(240px,34%)_minmax(0,1fr)] gap-0 lg:grid-cols-[240px_minmax(280px,340px)_minmax(0,1fr)] xl:grid-cols-[264px_380px_minmax(0,1fr)]">
-            {sidebar()}
-
-            <EmailList
-              mailboxAddress={session.displayAddress()}
-              messages={session.messages()}
-              loading={session.messagesLoading()}
-              selectedId={session.selectedId()}
-              setSelectedId={(id) => app.setSelectedId(id)}
-              hasMore={session.hasMore()}
-              loadingMore={session.loadingMore()}
-              loadMoreError={session.loadMoreError()}
-              onLoadMore={() => void session.loadMoreMessages()}
-              onMarkAllRead={() => void session.markAllRead()}
-              markingAllRead={session.markingAllRead()}
-            />
-
-            <EmailViewer
-              detail={session.detail() || null}
-              html={session.html() || ""}
-              text={session.text() || ""}
-              onReply={canCompose() ? startReply : undefined}
-              onForward={canCompose() ? startForward : undefined}
-              onToggleRead={(id, read) => void session.toggleMessageRead(id, read)}
-              onRetry={(id) => session.retryMessage(id)}
-              onDelete={(id) => session.deleteMessage(id)}
+      <div class="glass-shell flex h-full flex-col overflow-hidden rounded-[20px] sm:rounded-[28px]">
+        <header class="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-white/5 px-3 py-2.5 md:hidden">
+          <div class="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="打开菜单"
+              class="pressable spring-colors flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-zinc-200 hover:bg-white/10"
+              onClick={() => setMobileNavOpen(true)}
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            </button>
+            <div class="min-w-0 truncate text-sm font-semibold text-zinc-100">{mobilePageTitle()}</div>
+            <Show when={session.currentUnseen() > 0}>
+              <span class="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-rose-200">
+                {session.currentUnseen()}
+              </span>
+            </Show>
+          </div>
+          <div class="flex shrink-0 items-center gap-1.5">
+            <Show when={canCompose() && app.page() !== "compose"}>
+              <button
+                type="button"
+                class="spring-colors rounded-xl bg-indigo-500/20 px-2.5 py-1.5 text-xs font-semibold text-indigo-100 hover:bg-indigo-500/30"
+                onClick={() => app.setPage("compose")}
+              >
+                写邮件
+              </button>
+            </Show>
+            <Show when={app.page() === "inbox"}>
+              <button
+                type="button"
+                class="spring-colors rounded-xl bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/10"
+                onClick={() => session.refetchMessages()}
+              >
+                刷新
+              </button>
+            </Show>
+            <span
+              title={
+                session.connectionState() === "connected"
+                  ? "在线"
+                  : session.connectionState() === "disconnected"
+                    ? "离线"
+                    : "繁忙"
+              }
+              class="ml-0.5 h-2 w-2 rounded-full"
+              classList={{
+                "bg-emerald-400": session.connectionState() === "connected",
+                "bg-amber-400": session.connectionState() === "reconnecting",
+                "bg-rose-500": session.connectionState() === "disconnected",
+              }}
             />
           </div>
-        </Show>
+        </header>
+
+        <div class="relative min-h-0 flex-1 overflow-hidden">
+          <Show when={mobileNavOpen()}>
+            <div class="fixed inset-0 z-40 flex md:hidden">
+              <div
+                class="fixed inset-0 bg-black/45 backdrop-blur-xs"
+                onClick={() => setMobileNavOpen(false)}
+              />
+              <div class="glass-panel relative z-50 h-full w-[272px] max-w-[82vw] overflow-y-auto shadow-glass">
+                {sidebar()}
+              </div>
+            </div>
+          </Show>
+
+          <Show
+            when={app.page() === "inbox"}
+            fallback={
+              <div class="grid h-full grid-cols-1 gap-0 md:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[264px_minmax(0,1fr)]">
+                <div class="hidden h-full min-w-0 md:block">{sidebar()}</div>
+                <Show when={app.page() === "compose"}>
+                  <ComposeView
+                    api={app.api}
+                    userId={app.currentUser()?.id || ""}
+                    mailbox={session.mailboxAddress() || ""}
+                    aliases={session.aliases()?.aliases || []}
+                    canSendExternal={session.canSend()}
+                    sendableAddresses={session.sendableAddresses()}
+                    prefill={composePrefill()}
+                    onConsumePrefill={() => setComposePrefill(null)}
+                    onOpenSent={() => app.setPage("sent")}
+                  />
+                </Show>
+                <Show when={app.page() === "sent"}>
+                  <SentView
+                    api={app.api}
+                    onResend={startResend}
+                    onNewCompose={() => app.setPage("compose")}
+                    canSend={canCompose()}
+                  />
+                </Show>
+                <Show when={app.page() === "settings"}>
+                  <UserSettingsView user={app.currentUser()!} api={app.api} />
+                </Show>
+                <Show when={app.page() === "admin"}>
+                  <AdminSettingsView api={app.api} onDomainsChanged={() => void session.refetchMailbox()} />
+                </Show>
+              </div>
+            }
+          >
+            <div class="grid h-full grid-cols-1 gap-0 md:grid-cols-[240px_minmax(280px,340px)_minmax(0,1fr)] xl:grid-cols-[264px_380px_minmax(0,1fr)]">
+              <div class="hidden h-full min-w-0 md:block">{sidebar()}</div>
+
+              <div class="h-full min-w-0" classList={{ "hidden md:block": Boolean(session.selectedId()) }}>
+                <EmailList
+                  mailboxAddress={session.displayAddress()}
+                  messages={session.messages()}
+                  loading={session.messagesLoading()}
+                  selectedId={session.selectedId()}
+                  setSelectedId={(id) => app.setSelectedId(id)}
+                  hasMore={session.hasMore()}
+                  loadingMore={session.loadingMore()}
+                  loadMoreError={session.loadMoreError()}
+                  onLoadMore={() => void session.loadMoreMessages()}
+                  onMarkAllRead={() => void session.markAllRead()}
+                  markingAllRead={session.markingAllRead()}
+                />
+              </div>
+
+              <div class="h-full min-w-0" classList={{ "hidden md:block": !session.selectedId() }}>
+                <EmailViewer
+                  detail={session.detail() || null}
+                  html={session.html() || ""}
+                  text={session.text() || ""}
+                  onReply={canCompose() ? startReply : undefined}
+                  onForward={canCompose() ? startForward : undefined}
+                  onToggleRead={(id, read) => void session.toggleMessageRead(id, read)}
+                  onRetry={(id) => session.retryMessage(id)}
+                  onDelete={(id) => session.deleteMessage(id)}
+                  onBack={() => app.setSelectedId(null)}
+                />
+              </div>
+            </div>
+          </Show>
+        </div>
       </div>
     </div>
   );

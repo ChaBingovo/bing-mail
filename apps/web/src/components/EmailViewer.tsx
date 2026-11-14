@@ -22,6 +22,7 @@ export function EmailViewer(props: {
   onToggleRead?: (id: string, read: boolean) => Promise<void> | void;
   onRetry?: (id: string) => Promise<void> | void;
   onDelete?: (id: string) => Promise<void> | void;
+  onBack?: () => void;
 }) {
   const [retrying, setRetrying] = createSignal(false);
   const [retryError, setRetryError] = createSignal("");
@@ -60,10 +61,21 @@ export function EmailViewer(props: {
   };
 
   return (
-    <main class="h-full min-w-0 overflow-hidden bg-white/0 p-4">
+    <main class="h-full min-w-0 overflow-y-auto overflow-x-hidden bg-white/0 p-3 sm:p-5">
       <Show when={props.detail} fallback={<div class="text-sm text-zinc-500">选择一封邮件查看详情</div>}>
         {(d) => (
-          <div class="flex h-full min-w-0 flex-col gap-4">
+          <div class="flex min-h-full min-w-0 flex-col gap-4">
+            <Show when={props.onBack}>
+              <div class="md:hidden">
+                <button
+                  type="button"
+                  class="spring-colors inline-flex items-center gap-1 rounded-xl bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/10"
+                  onClick={() => props.onBack?.()}
+                >
+                  ← 返回列表
+                </button>
+              </div>
+            </Show>
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
                 <div class="break-words text-base font-semibold text-zinc-100">{d().subject || "(无主题)"}</div>

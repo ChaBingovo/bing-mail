@@ -14,6 +14,7 @@ export function SentView(props: {
   const [filter, setFilter] = createSignal<SentFilter>("ALL");
   const [query, setQuery] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = createSignal(false);
   const [copiedId, setCopiedId] = createSignal("");
 
   const [sent, { refetch }] = createResource(async () => {
@@ -61,8 +62,11 @@ export function SentView(props: {
   };
 
   return (
-    <div class="grid h-full grid-cols-[440px_1fr] gap-0">
-      <section class="flex h-full flex-col border-r border-white/10 bg-white/0 p-3">
+    <div class="grid h-full min-w-0 grid-cols-1 gap-0 md:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]">
+      <section
+        class="flex h-full min-w-0 flex-col border-r border-white/10 bg-white/0 p-3"
+        classList={{ "hidden md:flex": mobileDetailOpen() }}
+      >
         <div class="flex items-center justify-between gap-2 px-1 py-1">
           <div class="text-sm font-semibold text-zinc-100">已发邮件</div>
           <div class="flex items-center gap-2">
@@ -141,7 +145,10 @@ export function SentView(props: {
                       type="button"
                       class="pressable spring-colors mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
                       classList={{ "bg-white/10 border-white/20": selected() }}
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => {
+                        setSelectedId(item.id);
+                        setMobileDetailOpen(true);
+                      }}
                     >
                       <div class="flex items-baseline justify-between gap-2">
                         <div class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">
@@ -178,7 +185,19 @@ export function SentView(props: {
         </div>
       </section>
 
-      <main class="h-full overflow-auto bg-white/0 p-6">
+      <main
+        class="h-full min-w-0 overflow-auto bg-white/0 p-4 sm:p-6"
+        classList={{ "hidden md:block": !mobileDetailOpen() }}
+      >
+        <div class="mb-3 md:hidden">
+          <button
+            type="button"
+            class="spring-colors inline-flex items-center gap-1 rounded-xl bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/10"
+            onClick={() => setMobileDetailOpen(false)}
+          >
+            ← 返回列表
+          </button>
+        </div>
         <Show
           when={activeItem()}
           fallback={<div class="text-sm text-zinc-500">选择一封已发送邮件查看记录详情</div>}
