@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { createEffect } from "solid-js";
+import { useTheme } from "../context/ThemeContext";
 import { filterEmailCss, filterInlineStyle } from "../utils/emailCss";
 import { extractHtmlAndCss, toProxyImageSrc } from "../utils/emailHtml";
 
@@ -13,11 +14,13 @@ function ensureHooks() {
 }
 
 export function ShadowHtml(props: { html: string; debugId?: string }) {
+  const theme = useTheme();
   let host!: HTMLDivElement;
   let root: ShadowRoot | null = null;
 
   createEffect(() => {
     const value = props.html || "";
+    const isLight = theme.resolvedTheme() === "light";
     if (!root) root = host.attachShadow({ mode: "open" });
     ensureHooks();
     const extracted = extractHtmlAndCss(value);
@@ -27,8 +30,9 @@ export function ShadowHtml(props: { html: string; debugId?: string }) {
       FORBID_ATTR: ["onload", "onclick", "onerror", "srcset"],
     });
 
+    const hostColor = isLight ? "rgb(24 24 27)" : "rgb(228 228 231)";
     const baseCss = `
-:host{display:block;color:rgb(228 228 231);background:transparent;background-position:center;background-repeat:no-repeat;background-size:contain}
+:host{display:block;font-family:"MiSans",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:${hostColor};background:transparent;background-position:center;background-repeat:no-repeat;background-size:contain}
 img,video{max-width:100%;height:auto;display:block;margin-left:auto;margin-right:auto;object-fit:contain;object-position:center}
 table{max-width:100%;border-collapse:collapse}
 pre{white-space:pre-wrap;word-break:break-word}

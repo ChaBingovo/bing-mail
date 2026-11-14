@@ -29,6 +29,13 @@ export function createSpotlightActionBuilder(params: {
       onPick: () => params.app.setPage("compose"),
     });
     actions.push({
+      key: "nav-sent",
+      title: "已发邮件",
+      subtitle: "查看已发送邮件记录",
+      right: "↩",
+      onPick: () => params.app.setPage("sent"),
+    });
+    actions.push({
       key: "nav-settings",
       title: "账户设置",
       subtitle: "跳转到账户设置",
@@ -43,14 +50,27 @@ export function createSpotlightActionBuilder(params: {
       });
     }
 
+    actions.push({
+      key: "addr-all",
+      title: "全部收件箱",
+      subtitle: "显示主邮箱与全部别名收件",
+      right: params.displayAddress() === "" ? "当前" : "",
+      onPick: () => {
+        params.setDisplayAddress("");
+        params.app.setPage("inbox");
+      },
+    });
     const addrItems = [params.mailbox(), ...params.aliases()].filter(Boolean);
     addrItems.forEach((a) => {
       actions.push({
         key: `addr-${a}`,
         title: a,
-        subtitle: "切换显示邮箱地址",
+        subtitle: "筛选该邮箱收件",
         right: a === params.displayAddress() ? "当前" : "",
-        onPick: () => params.setDisplayAddress(a),
+        onPick: () => {
+          params.setDisplayAddress(a);
+          params.app.setPage("inbox");
+        },
       });
     });
 

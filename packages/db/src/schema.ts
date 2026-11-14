@@ -96,6 +96,7 @@ export const messages = sqliteTable(
     errorReason: text("error_reason"),
     fromAddress: text("from_address"),
     fromName: text("from_name"),
+    toAddress: text("to_address"),
     subject: text("subject"),
     snippet: text("snippet"),
     aiCode: text("ai_code"),
@@ -114,6 +115,7 @@ export const messages = sqliteTable(
   (t) => [
     index("messages_mailbox_id_received_at_idx").on(t.mailboxId, t.receivedAt),
     index("messages_mailbox_id_received_at_id_idx").on(t.mailboxId, t.receivedAt, t.id),
+    index("messages_mailbox_to_received_idx").on(t.mailboxId, t.toAddress, t.receivedAt, t.id),
   ],
 );
 

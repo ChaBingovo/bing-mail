@@ -7,18 +7,25 @@ function escapeHtml(s: string) {
     .replaceAll("'", "&#39;");
 }
 
+function isSafeHref(url: string) {
+  const v = (url || "").trim().toLowerCase();
+  return v.startsWith("https://") || v.startsWith("http://") || v.startsWith("mailto:");
+}
+
 export function looksLikeMarkdown(text: string) {
   const t = (text || "").trim();
   if (!t) return false;
   if (/^#{1,6}\s+\S/m.test(t)) return true;
   if (/^\s*[-*+]\s+\S/m.test(t)) return true;
+  if (/^\s*>\s+\S/m.test(t)) return true;
   if (/`{3,}/.test(t)) return true;
   if (/\[[^\]]+\]\([^)]+\)/.test(t)) return true;
   if (/\*\*[^*]+\*\*/.test(t)) return true;
   return false;
 }
 
-export function markdownToEmailHtml(markdown: string) {
+export function markdownToEmailHtml(markdown: string, opts: { variant?: "reader" | "outbound" } = {}) {
+  const variant = opts.variant || "reader";
   const src = (markdown || "").replaceAll("\r\n", "\n");
   const lines = src.split("\n");
   let i = 0;
@@ -29,7 +36,11 @@ export function markdownToEmailHtml(markdown: string) {
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => `<a href="${escapeHtml(url)}">${label}</a>`);
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => {
+      const cleanUrl = String(url || "").trim();
+      if (!isSafeHref(cleanUrl)) return label;
+      return `<a href="${escapeHtml(cleanUrl)}">${label}</a>`;
+    });
     return s;
   }
 
@@ -58,6 +69,19 @@ export function markdownToEmailHtml(markdown: string) {
       continue;
     }
 
+    const bq = line.match(/^\s*>\s?(.*)$/);
+    if (bq) {
+      const quoted: string[] = [];
+      while (i < lines.length) {
+        const m = (lines[i] || "").match(/^\s*>\s?(.*)$/);
+        if (!m) break;
+        quoted.push(inline(m[1]));
+        i += 1;
+      }
+      out += `<blockquote>${quoted.join("<br/>")}</blockquote>`;
+      continue;
+    }
+
     const li = line.match(/^\s*[-*+]\s+(.+)\s*$/);
     if (li) {
       let items = "";
@@ -78,17 +102,29 @@ export function markdownToEmailHtml(markdown: string) {
 
     let p = inline(line);
     i += 1;
-    while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^\s*#{1,6}\s+/.test(lines[i]) && !/^\s*[-*+]\s+/.test(lines[i])) {
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^\s*```/.test(lines[i]) &&
+      !/^\s*#{1,6}\s+/.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i]) &&
+      !/^\s*[-*+]\s+/.test(lines[i])
+    ) {
       p += "<br/>" + inline(lines[i]);
       i += 1;
     }
     out += `<p>${p}</p>`;
   }
 
+  const preBg = variant === "outbound" ? "rgba(127,127,127,.12)" : "rgba(255,255,255,.06)";
+  const preBorder = variant === "outbound" ? "rgba(127,127,127,.2)" : "rgba(255,255,255,.08)";
+  const quoteBorder = variant === "outbound" ? "rgba(127,127,127,.35)" : "rgba(255,255,255,.22)";
+
   const css = `
-article{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";font-size:14px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word}
-pre{padding:12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:auto}
+article{font-family:"MiSans",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";font-size:14px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word}
+pre{padding:12px;border-radius:12px;background:${preBg};border:1px solid ${preBorder};overflow:auto}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid ${quoteBorder};opacity:.85}
 ul{padding-left:1.25rem}
 a{text-decoration:underline}
 `;

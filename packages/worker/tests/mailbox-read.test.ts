@@ -143,3 +143,51 @@ test("read endpoints require a session", async () => {
   const res = await handleUserRoutes(req, envWith(db), new URL(req.url), "/api/user/read");
   expect(res?.status).toBe(401);
 });
+
+test("GET /api/user/messages filters by primary mailbox or active alias when address is supplied", async () => {
+  const queries: { sql: string; bindings: unknown[] }[] = [];
+  const db = {
+    prepare(sql: string) {
+      const stmt = {
+        _bindings: [] as unknown[],
+        bind(...args: unknown[]) {
+          stmt._bindings = args;
+          return stmt;
+        },
+        async first<T>() {
+          if (sql.includes("FROM mailboxes WHERE user_id")) return MAILBOX as unknown as T;
+          if (sql.includes("FROM mailbox_aliases") && stmt._bindings[1] === "alias@example.test") {
+            return { ok: 1 } as unknown as T;
+          }
+          return null as unknown as T;
+        },
+        async all<T>() {
+          queries.push({ sql, bindings: stmt._bindings });
+          return { results: [] as T[], success: true, meta: {} };
+        },
+        async run() {
+          return { success: true, meta: { changes: 0 } };
+        },
+      };
+      return stmt;
+    },
+  };
+
+  const allRes = await call(envWith(db), "/api/user/messages", { method: "GET" });
+  expect(allRes?.status).toBe(200);
+  expect(queries[0].sql).not.toContain("to_address =");
+
+  const primaryRes = await call(envWith(db), "/api/user/messages?address=me@example.test", { method: "GET" });
+  expect(primaryRes?.status).toBe(200);
+  expect(queries[1].sql).toContain("(to_address = ?2 OR to_address IS NULL)");
+  expect(queries[1].bindings).toContain("me@example.test");
+
+  const aliasRes = await call(envWith(db), "/api/user/messages?address=alias@example.test", { method: "GET" });
+  expect(aliasRes?.status).toBe(200);
+  expect(queries[2].sql).toContain("to_address = ?2");
+  expect(queries[2].sql).not.toContain("to_address IS NULL");
+  expect(queries[2].bindings).toContain("alias@example.test");
+
+  const unknownRes = await call(envWith(db), "/api/user/messages?address=other@example.test", { method: "GET" });
+  expect(unknownRes?.status).toBe(404);
+});

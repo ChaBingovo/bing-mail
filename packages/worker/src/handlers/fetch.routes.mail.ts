@@ -353,6 +353,7 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         status: row.status,
         fromName: row.from_name,
         fromAddress: row.from_address,
+        toAddress: row.to_address ?? null,
         subject: row.subject,
         snippet: row.snippet,
         receivedAt: row.received_at,

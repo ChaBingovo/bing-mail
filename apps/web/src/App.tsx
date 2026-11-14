@@ -8,15 +8,19 @@ import { Sidebar } from "./components/Sidebar";
 import { AdminSettingsView } from "./components/AdminSettingsView";
 import { UserSettingsView } from "./components/UserSettingsView";
 import { ComposeView } from "./components/ComposeView";
+import { SentView } from "./components/SentView";
 import { NotificationIsland } from "./components/NotificationIsland";
 import { Spotlight } from "./components/Spotlight";
+import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { AppProvider, useApp } from "./context/AppContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import { VisibilityProvider, useVisibility } from "./context/VisibilityContext";
-import type { AuthUser, MessageMeta } from "./types";
+import type { AuthUser, MessageDetail, MessageMeta, SentMessage } from "./types";
 import { useMailboxSession } from "./hooks/useMailboxSession";
 import { useInboxNotifications } from "./hooks/useInboxNotifications";
 import { createMailSyncController } from "./services/mailSyncController";
 import { createSpotlightActionBuilder } from "./services/spotlightActions";
+import { buildForwardPrefill, buildReplyPrefill, parseRecipientsInput, type ComposePrefill } from "./utils/compose";
 
 function GuestView() {
   const app = useApp();
@@ -86,35 +90,40 @@ function GuestView() {
   };
 
   return (
-    <Show
-      when={setup.state === "ready" && setup()?.initialized === false}
-      fallback={
-        <div class="flex h-dvh w-full items-center justify-center p-6">
-          <Show
-            when={tab() === "login"}
-            fallback={
-              <RegisterCard
-                onRegister={register}
-                domains={domains() || []}
-                onGoLogin={() => setTab("login")}
+    <div class="relative h-dvh w-full">
+      <Show
+        when={setup.state === "ready" && setup()?.initialized === false}
+        fallback={
+          <div class="flex h-dvh w-full items-center justify-center p-6">
+            <Show
+              when={tab() === "login"}
+              fallback={
+                <RegisterCard
+                  onRegister={register}
+                  domains={domains() || []}
+                  onGoLogin={() => setTab("login")}
+                  loading={loading()}
+                  error={error()}
+                />
+              }
+            >
+              <LoginCard
+                onLogin={login}
+                showRegister={Boolean(setup()?.allowRegister)}
+                onGoRegister={() => setTab("register")}
                 loading={loading()}
                 error={error()}
               />
-            }
-          >
-            <LoginCard
-              onLogin={login}
-              showRegister={Boolean(setup()?.allowRegister)}
-              onGoRegister={() => setTab("register")}
-              loading={loading()}
-              error={error()}
-            />
-          </Show>
-        </div>
-      }
-    >
-      <SetupView onInitialized={(user) => app.login(user)} />
-    </Show>
+            </Show>
+          </div>
+        }
+      >
+        <SetupView onInitialized={(user) => app.login(user)} />
+      </Show>
+      <div class="fixed bottom-6 left-6 z-40">
+        <ThemeSwitcher />
+      </div>
+    </div>
   );
 }
 
@@ -123,6 +132,7 @@ function ConsoleView() {
   const { isVisible } = useVisibility();
 
   const [spotlightOpen, setSpotlightOpen] = createSignal(false);
+  const [composePrefill, setComposePrefill] = createSignal<ComposePrefill | null>(null);
   const session = useMailboxSession(app, isVisible);
   const notifications = useInboxNotifications({
     mailboxAddress: () => session.mailboxAddress() || "",
@@ -197,12 +207,51 @@ function ConsoleView() {
     }));
   };
 
+  const startReply = (detail: MessageDetail) => {
+    setComposePrefill(
+      buildReplyPrefill({
+        detail,
+        text: session.text() || "",
+        html: session.html() || "",
+        fromAddress: detail.toAddress || session.displayAddress() || session.mailboxAddress() || "",
+      }),
+    );
+    app.setPage("compose");
+  };
+
+  const startForward = (detail: MessageDetail) => {
+    setComposePrefill(
+      buildForwardPrefill({
+        detail,
+        text: session.text() || "",
+        html: session.html() || "",
+        fromAddress: detail.toAddress || session.displayAddress() || session.mailboxAddress() || "",
+      }),
+    );
+    app.setPage("compose");
+  };
+
+  const startResend = (item: SentMessage) => {
+    setComposePrefill({
+      nonce: crypto.randomUUID(),
+      mode: "resend",
+      from: item.fromAddress,
+      to: parseRecipientsInput(item.toAddress),
+      subject: item.subject || "",
+      body: item.snippet || "",
+    });
+    app.setPage("compose");
+  };
+
   const sidebar = () => (
     <Sidebar
       user={app.currentUser()!}
       page={app.page()}
       setPage={app.setPage}
-      activeAddress={session.displayAddress() || session.mailboxAddress() || ""}
+      mailbox={session.mailboxAddress() || ""}
+      aliases={session.aliases()?.aliases || []}
+      filterAddress={session.displayAddress()}
+      onSelectFilter={(addr) => session.setDisplayAddress(addr)}
       currentUnseen={session.currentUnseen()}
       onRefresh={() => session.refetchMessages()}
       onLogout={() => app.logout()}
@@ -232,8 +281,19 @@ function ConsoleView() {
               <Show when={app.page() === "compose"}>
                 <ComposeView
                   api={app.api}
+                  userId={app.currentUser()?.id || ""}
                   mailbox={session.mailboxAddress() || ""}
                   aliases={session.aliases()?.aliases || []}
+                  prefill={composePrefill()}
+                  onConsumePrefill={() => setComposePrefill(null)}
+                  onOpenSent={() => app.setPage("sent")}
+                />
+              </Show>
+              <Show when={app.page() === "sent"}>
+                <SentView
+                  api={app.api}
+                  onResend={startResend}
+                  onNewCompose={() => app.setPage("compose")}
                 />
               </Show>
               <Show when={app.page() === "settings"}>
@@ -249,7 +309,7 @@ function ConsoleView() {
             {sidebar()}
 
             <EmailList
-              mailboxAddress={session.displayAddress() || session.activeOwnedAddress()}
+              mailboxAddress={session.displayAddress()}
               messages={session.messages()}
               loading={session.messagesLoading()}
               selectedId={session.selectedId()}
@@ -264,6 +324,8 @@ function ConsoleView() {
               detail={session.detail() || null}
               html={session.html() || ""}
               text={session.text() || ""}
+              onReply={startReply}
+              onForward={startForward}
               onRetry={(id) => session.retryMessage(id)}
               onDelete={(id) => session.deleteMessage(id)}
             />
@@ -281,10 +343,12 @@ function Root() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <VisibilityProvider>
-        <Root />
-      </VisibilityProvider>
-    </AppProvider>
+    <ThemeProvider>
+      <AppProvider>
+        <VisibilityProvider>
+          <Root />
+        </VisibilityProvider>
+      </AppProvider>
+    </ThemeProvider>
   );
 }

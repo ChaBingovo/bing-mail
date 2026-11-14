@@ -20,7 +20,6 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     const addr = mailboxAddress();
     if (!addr) return;
     if (app.activeAddress() !== addr) app.setActiveAddress(addr);
-    if (!displayAddress()) setDisplayAddress(addr);
   });
 
   const [aliases] = createResource(
@@ -54,9 +53,16 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [loadMoreError, setLoadMoreError] = createSignal("");
 
-  const [firstPage, { refetch: refetchMessages }] = createResource(mailboxAddress, async (address) => {
-    if (!address) return { messages: [] as MessageMeta[], nextCursor: null } satisfies MessagePage;
-    const data = await app.api.apiJson<MessagePage>(`/api/user/messages?limit=${FIRST_PAGE_LIMIT}`);
+  const messagesQueryKey = createMemo(() => {
+    const address = mailboxAddress();
+    if (!address) return null;
+    return { address, filter: displayAddress().trim().toLowerCase() };
+  });
+
+  const [firstPage, { refetch: refetchMessages }] = createResource(messagesQueryKey, async (key) => {
+    if (!key) return { messages: [] as MessageMeta[], nextCursor: null } satisfies MessagePage;
+    const filterParam = key.filter ? `&address=${encodeURIComponent(key.filter)}` : "";
+    const data = await app.api.apiJson<MessagePage>(`/api/user/messages?limit=${FIRST_PAGE_LIMIT}${filterParam}`);
     return { messages: data.messages || [], nextCursor: data.nextCursor ?? null } satisfies MessagePage;
   });
 
@@ -70,8 +76,10 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     setLoadingMore(true);
     setLoadMoreError("");
     try {
+      const filter = displayAddress().trim().toLowerCase();
+      const filterParam = filter ? `&address=${encodeURIComponent(filter)}` : "";
       const data = await app.api.apiJson<MessagePage>(
-        `/api/user/messages?limit=${NEXT_PAGE_LIMIT}&cursor=${encodeURIComponent(cursor)}`,
+        `/api/user/messages?limit=${NEXT_PAGE_LIMIT}&cursor=${encodeURIComponent(cursor)}${filterParam}`,
       );
       const fresh: MessagePage = { messages: data.messages || [], nextCursor: data.nextCursor ?? null };
       setMorePages((pages) => appendPage(pages, fresh));
@@ -85,9 +93,10 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
   const displayedMessages = createMemo(() => messages().messages());
   const hasMore = createMemo(() => Boolean(messages().nextCursor()));
 
-  // Reset pagination whenever the mailbox changes.
+  // Reset pagination whenever the mailbox or inbox filter changes.
   createEffect(() => {
     mailboxAddress();
+    displayAddress();
     setMorePages([]);
     setLoadMoreError("");
   });

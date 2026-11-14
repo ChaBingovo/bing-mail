@@ -17,7 +17,7 @@ export function EmailList(props: {
   return (
     <section class="h-full border-r border-white/10 bg-white/0 p-2">
       <div class="px-2 py-2 text-xs font-medium text-zinc-400">
-        <Show when={props.mailboxAddress} fallback={"请选择收件箱"}>
+        <Show when={props.mailboxAddress} fallback={"全部收件箱"}>
           {props.mailboxAddress}
         </Show>
       </div>
@@ -49,6 +49,9 @@ export function EmailList(props: {
                         </div>
                       </Show>
                     </div>
+                    <Show when={!props.mailboxAddress && m.toAddress}>
+                      <div class="mt-1 truncate text-[11px] text-zinc-500">收件：{m.toAddress}</div>
+                    </Show>
                     <Show when={m.snippet}>
                       <div class="mt-2 max-h-10 overflow-hidden text-ellipsis text-xs leading-relaxed text-zinc-500">
                         {m.snippet}

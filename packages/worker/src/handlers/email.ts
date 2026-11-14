@@ -104,9 +104,9 @@ export async function handleEmail(message: ForwardableEmailMessage, env: Env, _c
     });
 
     await env.DB.prepare(
-      "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key) VALUES (?1, ?2, 'PENDING', ?3, ?4)",
+      "INSERT INTO messages (id, mailbox_id, status, received_at, r2_raw_key, to_address) VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5)",
     )
-      .bind(messageId, target.id, receivedAt, rawKey)
+      .bind(messageId, target.id, receivedAt, rawKey, to || null)
       .run();
     logInfo({
       event: "email_ingest_stored",

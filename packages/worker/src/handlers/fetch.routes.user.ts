@@ -201,7 +201,28 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     if (!mailbox?.id) return json({ messages: [], address: null });
 
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200);
-    const page = await S.listMessagesPage(env, mailbox.id, limit, S.decodeCursor(url.searchParams.get("cursor")));
+    const rawAddress = (url.searchParams.get("address") || "").trim().toLowerCase();
+    let filter: { address: string; includeNull?: boolean } | null = null;
+    if (rawAddress && rawAddress !== "*" && rawAddress !== "all") {
+      if (rawAddress === mailbox.address.toLowerCase()) {
+        filter = { address: mailbox.address.toLowerCase(), includeNull: true };
+      } else {
+        const alias = await env.DB.prepare(
+          "SELECT 1 AS ok FROM mailbox_aliases WHERE mailbox_id = ?1 AND address = ?2 AND is_active = 1 LIMIT 1",
+        )
+          .bind(mailbox.id, rawAddress)
+          .first<{ ok: 1 }>();
+        if (!alias?.ok) return json({ error: "mailbox_not_found" }, { status: 404 });
+        filter = { address: rawAddress, includeNull: false };
+      }
+    }
+    const page = await S.listMessagesPage(
+      env,
+      mailbox.id,
+      limit,
+      S.decodeCursor(url.searchParams.get("cursor")),
+      filter,
+    );
     return json({ address: mailbox.address, ...page });
   }
 

@@ -45,10 +45,15 @@ test("navigation actions still cover the other pages", () => {
   const keys = builder("").map((a) => a.key);
   expect(keys).toContain("nav-inbox");
   expect(keys).toContain("nav-compose");
+  expect(keys).toContain("nav-sent");
   expect(keys).toContain("nav-settings");
+  expect(keys).toContain("addr-all");
 
   builder("收件箱").find((a) => a.key === "nav-inbox")!.onPick();
   expect(picked.page).toBe("inbox");
+
+  builder("已发邮件").find((a) => a.key === "nav-sent")!.onPick();
+  expect(picked.page).toBe("sent");
 });
 
 test("the admin entry is only offered to admins", () => {

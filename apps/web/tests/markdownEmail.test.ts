@@ -19,8 +19,18 @@ test("markdownToEmailHtml keeps unicode content", () => {
   expect(html).toContain("😄");
 });
 
-test("markdownToEmailHtml renders link", () => {
+test("markdownToEmailHtml renders link and blocks unsafe schemes", () => {
   const html = markdownToEmailHtml("[bing](https://example.com)");
   expect(html).toContain('<a href="https://example.com">bing</a>');
+
+  const unsafe = markdownToEmailHtml("[xss](javascript:alert(1))");
+  expect(unsafe).not.toContain("javascript:");
+  expect(unsafe).toContain("xss");
+});
+
+test("markdownToEmailHtml supports blockquotes and outbound variant", () => {
+  const html = markdownToEmailHtml("> quoted line\n\n```ts\nconst x = 1;\n```", { variant: "outbound" });
+  expect(html).toContain("<blockquote>quoted line</blockquote>");
+  expect(html).toContain("rgba(127,127,127,.12)");
 });
 

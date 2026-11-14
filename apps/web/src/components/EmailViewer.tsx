@@ -17,6 +17,8 @@ export function EmailViewer(props: {
   detail: MessageDetail | null;
   html: string;
   text: string;
+  onReply?: (detail: MessageDetail) => void;
+  onForward?: (detail: MessageDetail) => void;
   onRetry?: (id: string) => Promise<void> | void;
   onDelete?: (id: string) => Promise<void> | void;
 }) {
@@ -66,6 +68,9 @@ export function EmailViewer(props: {
                 <div class="truncate text-base font-semibold text-zinc-100">{d().subject || "(无主题)"}</div>
                 <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
                   <div class="text-zinc-400">{d().fromName || d().fromAddress || ""}</div>
+                  <Show when={d().toAddress}>
+                    <div class="text-zinc-500">收件：{d().toAddress}</div>
+                  </Show>
                   <div class="text-zinc-600">{formatTime(d().receivedAt)}</div>
                   <Show when={d().aiCode}>
                     <AiCodeCard code={d().aiCode || ""} service={d().aiService} size="md" />
@@ -78,15 +83,36 @@ export function EmailViewer(props: {
                   </Show>
                 </div>
               </div>
-              <Show when={props.onDelete}>
-                <button
-                  disabled={deleting()}
-                  class="spring-colors shrink-0 rounded-xl bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-60"
-                  onClick={() => void remove(d().id)}
-                >
-                  {deleting() ? "删除中…" : "删除"}
-                </button>
-              </Show>
+              <div class="flex shrink-0 items-center gap-2">
+                <Show when={Boolean(props.onReply && d().fromAddress)}>
+                  <button
+                    type="button"
+                    class="spring-colors pressable rounded-xl bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/25"
+                    onClick={() => props.onReply?.(d())}
+                  >
+                    回复
+                  </button>
+                </Show>
+                <Show when={Boolean(props.onForward)}>
+                  <button
+                    type="button"
+                    class="spring-colors pressable rounded-xl bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/10"
+                    onClick={() => props.onForward?.(d())}
+                  >
+                    转发
+                  </button>
+                </Show>
+                <Show when={props.onDelete}>
+                  <button
+                    type="button"
+                    disabled={deleting()}
+                    class="spring-colors pressable rounded-xl bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-60"
+                    onClick={() => void remove(d().id)}
+                  >
+                    {deleting() ? "删除中…" : "删除"}
+                  </button>
+                </Show>
+              </div>
             </div>
 
             <Show when={deleteError()}>

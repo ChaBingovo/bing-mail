@@ -4,8 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bingmail</title>
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem("bingmail.theme") || "system";
+          var prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+          var resolved = mode === "light" || mode === "dark" ? mode : (prefersLight ? "light" : "dark");
+          document.documentElement.classList.add(resolved);
+          document.documentElement.dataset.theme = resolved;
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-zinc-950 text-zinc-100">
+  <body class="text-zinc-100">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

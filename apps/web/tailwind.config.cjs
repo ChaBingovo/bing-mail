@@ -8,6 +8,7 @@ module.exports = {
       },
       fontFamily: {
         sans: [
+          '"MiSans"',
           "ui-sans-serif",
           "system-ui",
           "-apple-system",

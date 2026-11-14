@@ -6,6 +6,7 @@ export type MessageMeta = {
   status?: MessageStatus;
   fromName?: string | null;
   fromAddress?: string | null;
+  toAddress?: string | null;
   subject?: string | null;
   snippet?: string | null;
   aiCode?: string | null;
@@ -28,6 +29,7 @@ export type MessageDetail = {
   status: MessageStatus;
   fromName: string | null;
   fromAddress: string | null;
+  toAddress?: string | null;
   subject: string | null;
   snippet: string | null;
   receivedAt: number;
@@ -37,6 +39,17 @@ export type MessageDetail = {
   aiCode: string | null;
   aiService: string | null;
   attachments?: Attachment[];
+};
+
+export type SentMessage = {
+  id: string;
+  fromAddress: string;
+  toAddress: string;
+  subject: string | null;
+  snippet: string | null;
+  status: "SENT" | "FAILED";
+  errorReason: string | null;
+  sentAt: number;
 };
 
 export type RedDotResponse = {

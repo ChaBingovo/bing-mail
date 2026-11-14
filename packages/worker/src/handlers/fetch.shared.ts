@@ -218,6 +218,7 @@ export type MessageListRow = {
   status: MessageStatus;
   from_name: string | null;
   from_address: string | null;
+  to_address?: string | null;
   subject: string | null;
   snippet: string | null;
   received_at: number;
@@ -231,6 +232,7 @@ export type MessageListPage = {
     status: MessageStatus;
     fromName: string | null;
     fromAddress: string | null;
+    toAddress: string | null;
     subject: string | null;
     snippet: string | null;
     receivedAt: number;
@@ -252,18 +254,36 @@ export async function listMessagesPage(
   mailboxId: string,
   limit: number,
   cursor: { receivedAt: number; id: string } | null,
+  filter?: { address: string; includeNull?: boolean } | null,
 ): Promise<MessageListPage> {
   const columns =
-    "id, status, from_name, from_address, subject, snippet, received_at, ai_code, ai_service FROM messages WHERE mailbox_id = ?1";
-  const res = cursor
-    ? await env.DB.prepare(
-        `SELECT ${columns} AND (received_at < ?3 OR (received_at = ?3 AND id < ?4)) ORDER BY received_at DESC, id DESC LIMIT ?2`,
-      )
-        .bind(mailboxId, limit, cursor.receivedAt, cursor.id)
-        .all<MessageListRow>()
-    : await env.DB.prepare(`SELECT ${columns} ORDER BY received_at DESC, id DESC LIMIT ?2`)
-        .bind(mailboxId, limit)
-        .all<MessageListRow>();
+    "id, status, from_name, from_address, to_address, subject, snippet, received_at, ai_code, ai_service FROM messages";
+  const where = ["mailbox_id = ?1"];
+  const binds: (string | number)[] = [mailboxId];
+  let next = 2;
+
+  if (filter?.address) {
+    if (filter.includeNull) {
+      where.push(`(to_address = ?${next} OR to_address IS NULL)`);
+    } else {
+      where.push(`to_address = ?${next}`);
+    }
+    binds.push(filter.address);
+    next += 1;
+  }
+
+  if (cursor) {
+    where.push(`(received_at < ?${next} OR (received_at = ?${next} AND id < ?${next + 1}))`);
+    binds.push(cursor.receivedAt, cursor.id);
+    next += 2;
+  }
+
+  binds.push(limit);
+  const res = await env.DB.prepare(
+    `SELECT ${columns} WHERE ${where.join(" AND ")} ORDER BY received_at DESC, id DESC LIMIT ?${next}`,
+  )
+    .bind(...binds)
+    .all<MessageListRow>();
 
   const rows = res.results || [];
   const last = rows[rows.length - 1];
@@ -273,6 +293,7 @@ export async function listMessagesPage(
       status: r.status,
       fromName: r.from_name,
       fromAddress: r.from_address,
+      toAddress: r.to_address ?? null,
       subject: r.subject,
       snippet: r.snippet,
       receivedAt: r.received_at,
@@ -531,7 +552,7 @@ export async function requireMailboxAccess(env: Env, auth: { sub: string; isAdmi
 
 export async function requireMessageAccess(env: Env, auth: { sub: string; isAdmin?: boolean }, messageId: string) {
   const row = await env.DB.prepare(
-    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.text_plain, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
+    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.to_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.text_plain, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
   )
     .bind(messageId)
     .first<{
