@@ -354,7 +354,7 @@ function ConsoleView() {
                 class="fixed inset-0 bg-black/45 backdrop-blur-xs"
                 onClick={() => setMobileNavOpen(false)}
               />
-              <div class="glass-panel relative z-50 h-full w-[272px] max-w-[82vw] overflow-y-auto shadow-glass">
+              <div class="mobile-drawer relative z-50 h-full w-[272px] max-w-[82vw] overflow-y-auto shadow-glass">
                 {sidebar()}
               </div>
             </div>
