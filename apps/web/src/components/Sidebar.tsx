@@ -15,6 +15,7 @@ export function Sidebar(props: {
   onRefresh: () => void;
   onLogout: () => void;
   onOpenSpotlight: () => void;
+  canSend?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   let menuRootEl: HTMLDivElement | undefined;
@@ -167,22 +168,24 @@ export function Sidebar(props: {
         </div>
       </div>
 
-      <button
-        type="button"
-        class="pressable spring-colors mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-400/25 bg-indigo-500/20 px-3 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/30"
-        classList={{ "ring-2 ring-indigo-400/40 bg-indigo-500/30": props.page === "compose" }}
-        onClick={() => props.setPage("compose")}
-      >
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9" />
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"
-          />
-        </svg>
-        <span>写邮件</span>
-      </button>
+      <Show when={Boolean(props.canSend)}>
+        <button
+          type="button"
+          class="pressable spring-colors mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-400/25 bg-indigo-500/20 px-3 py-2.5 text-sm font-semibold text-indigo-100 hover:bg-indigo-500/30"
+          classList={{ "ring-2 ring-indigo-400/40 bg-indigo-500/30": props.page === "compose" }}
+          onClick={() => props.setPage("compose")}
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9" />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5Z"
+            />
+          </svg>
+          <span>写邮件</span>
+        </button>
+      </Show>
 
       <button
         type="button"

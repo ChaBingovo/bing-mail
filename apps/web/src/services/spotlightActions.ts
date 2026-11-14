@@ -9,6 +9,7 @@ export function createSpotlightActionBuilder(params: {
   displayAddress: () => string;
   setDisplayAddress: (v: string) => void;
   messages: () => MessageMeta[];
+  canSend?: () => boolean;
 }) {
   return (q: string): SpotlightAction[] => {
     const query = (q || "").trim().toLowerCase();
@@ -21,13 +22,15 @@ export function createSpotlightActionBuilder(params: {
       right: "↩",
       onPick: () => params.app.setPage("inbox"),
     });
-    actions.push({
-      key: "nav-compose",
-      title: "写邮件",
-      subtitle: "撰写并发送新邮件",
-      right: "↩",
-      onPick: () => params.app.setPage("compose"),
-    });
+    if (!params.canSend || params.canSend()) {
+      actions.push({
+        key: "nav-compose",
+        title: "写邮件",
+        subtitle: "撰写并发送新邮件",
+        right: "↩",
+        onPick: () => params.app.setPage("compose"),
+      });
+    }
     actions.push({
       key: "nav-sent",
       title: "已发邮件",

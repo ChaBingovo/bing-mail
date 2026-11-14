@@ -8,7 +8,15 @@ const MAILBOX = { id: "mb1", address: "me@example.test" };
 type DbOp = { sql: string; bindings: unknown[] };
 
 function createDb(
-  opts: { mailbox?: { id: string; address: string } | null; alias?: boolean; sent?: unknown[]; failRecord?: boolean } = {},
+  opts: {
+    mailbox?: { id: string; address: string } | null;
+    alias?: boolean;
+    aliases?: string[];
+    sent?: unknown[];
+    failRecord?: boolean;
+    sendProvider?: "none" | "cloudflare" | "resend";
+    domainProviders?: Record<string, string>;
+  } = {},
 ) {
   const ops: DbOp[] = [];
   const db = {
@@ -27,6 +35,11 @@ function createDb(
           if (sql.includes("FROM mailbox_aliases")) {
             return (opts.alias ? { ok: 1 } : null) as unknown as T;
           }
+          if (sql.includes("FROM domains WHERE domain")) {
+            const domain = String(stmt._bindings[0] || "");
+            const provider = opts.domainProviders?.[domain] ?? opts.sendProvider ?? "cloudflare";
+            return { send_provider: provider } as unknown as T;
+          }
           return null as unknown as T;
         },
         async run() {
@@ -35,6 +48,14 @@ function createDb(
           return { success: true, meta: { changes: 1 } };
         },
         async all<T>() {
+          if (sql.includes("FROM mailbox_aliases")) {
+            return { results: (opts.aliases ?? []).map((address) => ({ address })) as T[], success: true, meta: {} };
+          }
+          if (sql.includes("FROM domains WHERE is_active")) {
+            const map = opts.domainProviders ?? { "example.test": opts.sendProvider ?? "cloudflare" };
+            const results = Object.entries(map).map(([domain, send_provider]) => ({ domain, send_provider }));
+            return { results: results as T[], success: true, meta: {} };
+          }
           return { results: (opts.sent ?? []) as T[], success: true, meta: {} };
         },
       };
@@ -50,10 +71,14 @@ function createEnv(
   opts: {
     mailbox?: { id: string; address: string } | null;
     alias?: boolean;
+    aliases?: string[];
     sent?: unknown[];
     fail?: boolean;
     noBinding?: boolean;
     failRecord?: boolean;
+    sendProvider?: "none" | "cloudflare" | "resend";
+    domainProviders?: Record<string, string>;
+    resendApiKey?: string;
   } = {},
 ) {
   const { db, ops } = createDb(opts);
@@ -61,6 +86,7 @@ function createEnv(
   const env = {
     JWT_SECRET: SECRET,
     DB: db,
+    ...(opts.resendApiKey !== undefined ? { RESEND_API_KEY: opts.resendApiKey } : {}),
     ...(opts.noBinding
       ? {}
       : {
@@ -228,5 +254,83 @@ test("the sent list maps database rows to the wire shape", async () => {
     status: "SENT",
     errorReason: null,
     sentAt: 1700000000000,
+  });
+});
+
+test("domain with send_provider=none returns 503 even when EMAIL binding exists", async () => {
+  const { env } = createEnv({ sendProvider: "none" });
+  const res = await send(env, { to: "you@example.com", text: "hi" });
+  expect(res.status).toBe(503);
+  expect((await res.json()) as unknown).toEqual({ error: "mail_not_configured" });
+});
+
+test("domain with send_provider=resend returns 503 when RESEND_API_KEY is missing", async () => {
+  const { env } = createEnv({ sendProvider: "resend" });
+  const res = await send(env, { to: "you@example.com", text: "hi" });
+  expect(res.status).toBe(503);
+  expect((await res.json()) as unknown).toEqual({ error: "mail_not_configured" });
+});
+
+test("domain with send_provider=resend sends via Resend API when configured", async () => {
+  const { env, ops } = createEnv({ sendProvider: "resend", resendApiKey: "re_test_123" });
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url: String(input),
+      auth: headers.get("Authorization"),
+      body: JSON.parse(String(init?.body || "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ id: "re_msg_999" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const res = await send(env, { to: "you@example.com", subject: "Resend Hi", text: "hello" });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as any;
+    expect(body.messageId).toBe("re_msg_999");
+    expect(calls.length).toBe(1);
+    expect(calls[0].url).toBe("https://api.resend.com/emails");
+    expect(calls[0].auth).toBe("Bearer re_test_123");
+    expect(calls[0].body.from).toBe(MAILBOX.address);
+    expect(ops.some((o) => o.sql.includes("'SENT'"))).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("/api/user/mailbox reports canSend and per-domain sendableAddresses", async () => {
+  const { env } = createEnv({
+    aliases: ["alias@second.test"],
+    domainProviders: { "example.test": "none", "second.test": "resend" },
+    resendApiKey: "re_test_123",
+  });
+  const req = new Request("https://mail.example.com/api/user/mailbox", {
+    headers: { authorization: `Bearer ${await token()}` },
+  });
+  const res = await handleUserRoutes(req, env, new URL(req.url), "/api/user/mailbox");
+  expect(res?.status).toBe(200);
+  expect((await res!.json()) as unknown).toEqual({
+    address: MAILBOX.address,
+    canSend: true,
+    sendableAddresses: ["alias@second.test"],
+  });
+
+  const disabledEnv = createEnv({
+    domainProviders: { "example.test": "none" },
+  }).env;
+  const req2 = new Request("https://mail.example.com/api/user/mailbox", {
+    headers: { authorization: `Bearer ${await token()}` },
+  });
+  const res2 = await handleUserRoutes(req2, disabledEnv, new URL(req2.url), "/api/user/mailbox");
+  expect(res2?.status).toBe(200);
+  expect((await res2!.json()) as unknown).toEqual({
+    address: MAILBOX.address,
+    canSend: false,
+    sendableAddresses: [],
   });
 });

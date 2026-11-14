@@ -9,6 +9,7 @@ export function SentView(props: {
   api: ApiClient;
   onResend: (item: SentMessage) => void;
   onNewCompose: () => void;
+  canSend?: boolean;
 }) {
   const [filter, setFilter] = createSignal<SentFilter>("ALL");
   const [query, setQuery] = createSignal("");
@@ -72,13 +73,15 @@ export function SentView(props: {
             >
               刷新
             </button>
-            <button
-              type="button"
-              class="spring-colors pressable rounded-xl bg-indigo-500/20 px-2.5 py-1 text-xs font-semibold text-indigo-100 hover:bg-indigo-500/30"
-              onClick={props.onNewCompose}
-            >
-              写邮件
-            </button>
+            <Show when={Boolean(props.canSend)}>
+              <button
+                type="button"
+                class="spring-colors pressable rounded-xl bg-indigo-500/20 px-2.5 py-1 text-xs font-semibold text-indigo-100 hover:bg-indigo-500/30"
+                onClick={props.onNewCompose}
+              >
+                写邮件
+              </button>
+            </Show>
           </div>
         </div>
 

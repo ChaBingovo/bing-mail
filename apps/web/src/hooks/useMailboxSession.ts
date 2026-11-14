@@ -7,14 +7,25 @@ import { clearLastSeen, getLastSeen } from "../services/lastSeen";
 export function useMailboxSession(app: AppContextValue, getIsVisible: () => boolean) {
   const [displayAddress, setDisplayAddress] = createSignal("");
 
-  const [mailboxAddress] = createResource(
+  const [mailboxInfo, { refetch: refetchMailbox }] = createResource(
     () => (app.mode() === "user" ? app.currentUser()?.id || "user" : ""),
     async (k) => {
-      if (!k) return null;
-      const data = await app.api.apiJson<{ address: string | null }>("/api/user/mailbox");
-      return data.address;
+      if (!k) return { address: null as string | null, canSend: false, sendableAddresses: [] as string[] };
+      const data = await app.api.apiJson<{
+        address: string | null;
+        canSend?: boolean;
+        sendableAddresses?: string[];
+      }>("/api/user/mailbox");
+      return {
+        address: data.address ?? null,
+        canSend: Boolean(data.canSend),
+        sendableAddresses: Array.isArray(data.sendableAddresses) ? data.sendableAddresses : [],
+      };
     },
   );
+  const mailboxAddress = () => mailboxInfo()?.address ?? null;
+  const canSend = () => Boolean(mailboxInfo()?.canSend);
+  const sendableAddresses = () => mailboxInfo()?.sendableAddresses ?? [];
 
   createEffect(() => {
     const addr = mailboxAddress();
@@ -215,6 +226,9 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     readMarker,
     setReadMarker,
     mailboxAddress,
+    canSend,
+    sendableAddresses,
+    refetchMailbox,
     aliases,
     messages: displayedMessages,
     messagesLoading: () => Boolean(firstPage.loading),

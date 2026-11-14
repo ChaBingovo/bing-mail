@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json, text } from "../http";
 import { hashPassword } from "../auth";
+import { getSendCapabilities, normalizeSendProvider } from "../outbound";
 import * as S from "./fetch.shared";
 
 export async function handleAdminRoutes(request: Request, env: Env, pathname: string): Promise<Response | null> {
@@ -102,10 +103,13 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
   if (pathname === "/api/admin/domains" && request.method === "GET") {
     const authRes = await S.requireAdminOr403(request, env);
     if (authRes instanceof Response) return authRes;
-    const res = await env.DB.prepare("SELECT id, domain, is_active, created_at FROM domains ORDER BY domain ASC").all<{
+    const res = await env.DB.prepare(
+      "SELECT id, domain, is_active, send_provider, created_at FROM domains ORDER BY domain ASC",
+    ).all<{
       id: string;
       domain: string;
       is_active: number;
+      send_provider: string;
       created_at: number;
     }>();
     return json({
@@ -113,8 +117,10 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
         id: r.id,
         domain: r.domain,
         isActive: Boolean(r.is_active),
+        sendProvider: normalizeSendProvider(r.send_provider) ?? "none",
         createdAt: r.created_at,
       })),
+      capabilities: getSendCapabilities(env),
     });
   }
 
@@ -125,21 +131,43 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain = S.normalizeDomain(S.getLowerStringField(body, "domain") || "");
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
+    const rawProvider = S.getStringField(body, "sendProvider");
+    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : "none";
+    if (!sendProvider) return json({ error: "invalid_send_provider" }, { status: 400 });
     const id = crypto.randomUUID();
     try {
-      await env.DB.prepare("INSERT INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)").bind(id, domain).run();
+      await env.DB.prepare("INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3)")
+        .bind(id, domain, sendProvider)
+        .run();
     } catch (err) {
       if (S.isUniqueViolation(err)) return json({ error: "domain_taken" }, { status: 409 });
       throw err;
     }
-    return json({ domain: { id, domain, isActive: true } }, { status: 201 });
+    return json({ domain: { id, domain, isActive: true, sendProvider } }, { status: 201 });
   }
 
-  const adminDomainDeleteMatch = pathname.match(/^\/api\/admin\/domains\/([^/]+)$/);
-  if (adminDomainDeleteMatch && request.method === "DELETE") {
+  const adminDomainMatch = pathname.match(/^\/api\/admin\/domains\/([^/]+)$/);
+  if (adminDomainMatch && (request.method === "PATCH" || request.method === "PUT")) {
     const authRes = await S.requireAdminOr403(request, env);
     if (authRes instanceof Response) return authRes;
-    const domain = decodeURIComponent(adminDomainDeleteMatch[1]).trim().toLowerCase();
+    const domain = decodeURIComponent(adminDomainMatch[1]).trim().toLowerCase();
+    if (!domain) return json({ error: "invalid_domain" }, { status: 400 });
+    const body = await S.readJsonBody(request);
+    if (!body) return json({ error: "invalid_json" }, { status: 400 });
+    const rawProvider = S.getStringField(body, "sendProvider");
+    const sendProvider = normalizeSendProvider(rawProvider);
+    if (!sendProvider) return json({ error: "invalid_send_provider" }, { status: 400 });
+    const res = await env.DB.prepare("UPDATE domains SET send_provider = ?1 WHERE domain = ?2")
+      .bind(sendProvider, domain)
+      .run();
+    if ((res.meta?.changes ?? 0) === 0) return json({ error: "domain_not_found" }, { status: 404 });
+    return json({ domain, sendProvider });
+  }
+
+  if (adminDomainMatch && request.method === "DELETE") {
+    const authRes = await S.requireAdminOr403(request, env);
+    if (authRes instanceof Response) return authRes;
+    const domain = decodeURIComponent(adminDomainMatch[1]).trim().toLowerCase();
     if (!domain) return json({ error: "invalid_domain" }, { status: 400 });
     await env.DB.prepare("DELETE FROM domains WHERE domain = ?1").bind(domain).run();
     return text("", { status: 204 });

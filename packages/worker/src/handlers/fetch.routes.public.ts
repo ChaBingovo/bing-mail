@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json } from "../http";
 import { hashPassword, passwordVersion, signJwt, verifyPassword } from "../auth";
+import { getSendCapabilities, normalizeSendProvider } from "../outbound";
 import * as S from "./fetch.shared";
 
 export async function handlePublicRoutes(request: Request, env: Env, url: URL, pathname: string): Promise<Response | null> {
@@ -20,16 +21,26 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     return json({ mode: cfg.mode, siteKey: cfg.siteKey }, { headers: { "cache-control": "no-store" } });
   }
 
+  if (pathname === "/api/setup/capabilities" && request.method === "GET") {
+    if (await S.isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
+    return json({ capabilities: getSendCapabilities(env) });
+  }
+
   if (pathname === "/api/setup/domains" && request.method === "POST") {
     if (await S.isInitialized(env)) return json({ error: "already_initialized" }, { status: 409 });
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
-    await env.DB.prepare("INSERT OR IGNORE INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)")
-      .bind(crypto.randomUUID(), domain)
+    const rawProvider = S.getStringField(body, "sendProvider");
+    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : "none";
+    if (!sendProvider) return json({ error: "invalid_send_provider" }, { status: 400 });
+    await env.DB.prepare(
+      "INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3) ON CONFLICT(domain) DO UPDATE SET send_provider = CASE WHEN ?4 = 1 THEN excluded.send_provider ELSE domains.send_provider END",
+    )
+      .bind(crypto.randomUUID(), domain, sendProvider, rawProvider !== undefined ? 1 : 0)
       .run();
-    return json({ domain });
+    return json({ domain, sendProvider });
   }
 
   if (pathname === "/api/setup/init" && request.method === "POST") {
@@ -97,8 +108,16 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .bind(now)
       .run();
 
-    await env.DB.prepare("INSERT OR IGNORE INTO domains (id, domain, is_active) VALUES (?1, ?2, 1)")
-      .bind(crypto.randomUUID(), domain)
+    const rawProvider = S.getStringField(body, "sendProvider");
+    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : null;
+    if (rawProvider !== undefined && !sendProvider) {
+      return json({ error: "invalid_send_provider" }, { status: 400 });
+    }
+
+    await env.DB.prepare(
+      "INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3) ON CONFLICT(domain) DO UPDATE SET send_provider = CASE WHEN ?4 = 1 THEN excluded.send_provider ELSE domains.send_provider END",
+    )
+      .bind(crypto.randomUUID(), domain, sendProvider ?? "none", sendProvider ? 1 : 0)
       .run();
 
     try {

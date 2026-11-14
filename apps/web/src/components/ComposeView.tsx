@@ -25,6 +25,7 @@ export function ComposeView(props: {
   userId: string;
   mailbox: string;
   aliases: string[];
+  sendableAddresses?: string[];
   prefill?: ComposePrefill | null;
   onConsumePrefill?: () => void;
   onOpenSent?: () => void;
@@ -55,6 +56,10 @@ export function ComposeView(props: {
     for (const alias of props.aliases) {
       const addr = (alias || "").trim().toLowerCase();
       if (addr && !out.includes(addr)) out.push(addr);
+    }
+    if (props.sendableAddresses !== undefined) {
+      const allowed = new Set(props.sendableAddresses.map((a) => a.trim().toLowerCase()).filter(Boolean));
+      return out.filter((addr) => allowed.has(addr));
     }
     return out;
   });

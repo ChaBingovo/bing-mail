@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { AppContextValue } from "../src/context/AppContext";
 import { createSpotlightActionBuilder } from "../src/services/spotlightActions";
 
-function build(opts: { isAdmin?: boolean } = {}) {
+function build(opts: { isAdmin?: boolean; canSend?: boolean } = {}) {
   const picked: { page?: string; selectedId?: string | null } = {};
   const app = {
     setPage: (page: string) => {
@@ -21,6 +21,7 @@ function build(opts: { isAdmin?: boolean } = {}) {
     displayAddress: () => "me@example.test",
     setDisplayAddress: () => {},
     messages: () => [],
+    canSend: opts.canSend === undefined ? undefined : () => Boolean(opts.canSend),
   });
   return { builder, picked };
 }
@@ -54,6 +55,12 @@ test("navigation actions still cover the other pages", () => {
 
   builder("已发邮件").find((a) => a.key === "nav-sent")!.onPick();
   expect(picked.page).toBe("sent");
+});
+
+test("hides compose action when canSend returns false", () => {
+  const { builder } = build({ canSend: false });
+  const keys = builder("").map((a) => a.key);
+  expect(keys).not.toContain("nav-compose");
 });
 
 test("the admin entry is only offered to admins", () => {

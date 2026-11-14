@@ -14,6 +14,7 @@ export type Env = {
   AUTH_RATE: DurableObjectNamespace;
   /** Outbound mail binding (`[[send_email]]` in wrangler.toml). Absent in bare local dev. */
   EMAIL?: SendEmail;
+  RESEND_API_KEY?: string;
   HTML_INLINE_LIMIT: string;
   PARSE_QUEUE_MAX_ATTEMPTS?: string;
   PARSE_QUEUE_LOCK_TTL_MS?: string;

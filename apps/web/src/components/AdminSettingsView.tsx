@@ -9,10 +9,13 @@ type AdminUserRow = {
   createdAt: number;
 };
 
+type SendProvider = "none" | "cloudflare" | "resend";
+
 type AdminDomainRow = {
   id: string;
   domain: string;
   isActive: boolean;
+  sendProvider: SendProvider;
   createdAt: number;
 };
 
@@ -23,8 +26,12 @@ type AdminMailboxRow = {
   isActive: boolean;
 };
 
-export function AdminSettingsView(props: { api: ApiClient }) {
+export function AdminSettingsView(props: { api: ApiClient; onDomainsChanged?: () => void }) {
   const [error, setError] = createSignal("");
+  const [sendCapabilities, setSendCapabilities] = createSignal<{ cloudflare: boolean; resend: boolean }>({
+    cloudflare: false,
+    resend: false,
+  });
 
   const [settings, { refetch: refetchSettings }] = createResource(async () => {
     const data = await props.api.apiJson<{ allowRegister: boolean; maxAliases: number; retentionDays: number }>(
@@ -39,7 +46,16 @@ export function AdminSettingsView(props: { api: ApiClient }) {
   });
 
   const [domains, { refetch: refetchDomains }] = createResource(async () => {
-    const data = await props.api.apiJson<{ domains: AdminDomainRow[] }>("/api/admin/domains");
+    const data = await props.api.apiJson<{
+      domains: AdminDomainRow[];
+      capabilities?: { cloudflare?: boolean; resend?: boolean };
+    }>("/api/admin/domains");
+    if (data.capabilities) {
+      setSendCapabilities({
+        cloudflare: Boolean(data.capabilities.cloudflare),
+        resend: Boolean(data.capabilities.resend),
+      });
+    }
     return data.domains;
   });
 
@@ -185,8 +201,24 @@ export function AdminSettingsView(props: { api: ApiClient }) {
       });
       setDomainInput("");
       refetchDomains();
+      props.onDomainsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "添加失败");
+    }
+  };
+
+  const updateDomainProvider = async (domain: string, sendProvider: SendProvider) => {
+    setError("");
+    try {
+      await props.api.apiJson(`/api/admin/domains/${encodeURIComponent(domain)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sendProvider }),
+      });
+      refetchDomains();
+      props.onDomainsChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新发信商失败");
     }
   };
 
@@ -195,6 +227,7 @@ export function AdminSettingsView(props: { api: ApiClient }) {
     try {
       await props.api.apiText(`/api/admin/domains/${encodeURIComponent(domain)}`, { method: "DELETE" });
       refetchDomains();
+      props.onDomainsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
     }
@@ -371,8 +404,28 @@ export function AdminSettingsView(props: { api: ApiClient }) {
         </div>
 
         <div class="rounded-xl border border-white/10 bg-white/5 p-5">
-          <div class="text-sm font-semibold text-zinc-100">域名</div>
-          <div class="mt-1 text-xs text-zinc-500">仅记录域名，用于管理与提示外部 Email Routing 配置</div>
+          <div class="text-sm font-semibold text-zinc-100">域名与发信服务</div>
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <span>每个域名可单独选择发信服务：</span>
+            <span
+              class="rounded px-1.5 py-0.5 text-[11px]"
+              classList={{
+                "bg-emerald-500/15 text-emerald-300": sendCapabilities().cloudflare,
+                "bg-white/5 text-zinc-400": !sendCapabilities().cloudflare,
+              }}
+            >
+              Cloudflare EMAIL {sendCapabilities().cloudflare ? "已就绪" : "未绑定"}
+            </span>
+            <span
+              class="rounded px-1.5 py-0.5 text-[11px]"
+              classList={{
+                "bg-emerald-500/15 text-emerald-300": sendCapabilities().resend,
+                "bg-white/5 text-zinc-400": !sendCapabilities().resend,
+              }}
+            >
+              Resend API Key {sendCapabilities().resend ? "已就绪" : "未配置"}
+            </span>
+          </div>
           <div class="mt-4 flex gap-2">
             <input
               value={domainInput()}
@@ -390,14 +443,27 @@ export function AdminSettingsView(props: { api: ApiClient }) {
           <div class="mt-4 space-y-2">
             <For each={domains() || []}>
               {(d) => (
-                <div class="flex items-center justify-between rounded-md bg-white/5 px-3 py-2">
+                <div class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/5 px-3 py-2">
                   <div class="min-w-0">
                     <div class="truncate text-sm text-zinc-200">{d.domain}</div>
                     <div class="text-xs text-zinc-500">{new Date(d.createdAt).toLocaleString()}</div>
                   </div>
-                  <button class="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => deleteDomain(d.domain)}>
-                    删除
-                  </button>
+                  <div class="flex items-center gap-2">
+                    <DropdownSelect
+                      value={d.sendProvider || "none"}
+                      options={[
+                        { value: "none", label: "暂不发信" },
+                        { value: "cloudflare", label: "Cloudflare Email" },
+                        { value: "resend", label: "Resend" },
+                      ]}
+                      wrapperClass="relative shrink-0"
+                      class="min-w-[140px]"
+                      onChange={(v) => void updateDomainProvider(d.domain, v as SendProvider)}
+                    />
+                    <button class="text-xs text-zinc-400 hover:text-zinc-200" onClick={() => deleteDomain(d.domain)}>
+                      删除
+                    </button>
+                  </div>
                 </div>
               )}
             </For>

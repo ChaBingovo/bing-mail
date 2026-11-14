@@ -2,17 +2,34 @@ import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import type { AuthUser } from "../types";
 import { DropdownSelect } from "./DropdownSelect";
 
+type SendProvider = "none" | "cloudflare" | "resend";
+
 export function SetupView(props: {
   onInitialized: (user: AuthUser) => void;
 }) {
-  const [step, setStep] = createSignal<1 | 2 | 3>(1);
+  const [step, setStep] = createSignal<1 | 2 | 3 | 4>(1);
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [domainInput, setDomainInput] = createSignal("");
   const [mailboxLocal, setMailboxLocal] = createSignal("");
   const [selectedDomain, setSelectedDomain] = createSignal("");
+  const [sendProvider, setSendProvider] = createSignal<SendProvider>("none");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
+
+  const [capabilities] = createResource(async () => {
+    try {
+      const res = await fetch("/api/setup/capabilities");
+      if (!res.ok) return { cloudflare: false, resend: false };
+      const data = (await res.json()) as { capabilities?: { cloudflare?: boolean; resend?: boolean } };
+      return {
+        cloudflare: Boolean(data.capabilities?.cloudflare),
+        resend: Boolean(data.capabilities?.resend),
+      };
+    } catch {
+      return { cloudflare: false, resend: false };
+    }
+  });
 
   const [domains, { refetch: refetchDomains }] = createResource(async () => {
     try {
@@ -45,6 +62,7 @@ export function SetupView(props: {
           password: password(),
           domain: selectedDomain().trim(),
           mailboxLocal: mailboxLocal().trim(),
+          sendProvider: sendProvider(),
         }),
       });
       if (!res.ok) {
@@ -68,7 +86,7 @@ export function SetupView(props: {
     <div class="flex h-dvh w-full items-center justify-center bg-zinc-950 p-6">
       <div class="mx-auto w-full max-w-md rounded-xl border border-white/10 bg-zinc-950/60 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
         <div class="text-sm font-semibold tracking-wide text-zinc-100">初始化 Bingmail</div>
-        <div class="mt-1 text-xs text-zinc-500">创建管理员账户 → 绑定域名 → 分配主邮箱地址</div>
+        <div class="mt-1 text-xs text-zinc-500">创建管理员账户 → 绑定域名 → 发信服务（可选）→ 分配主邮箱</div>
 
         <div class="mt-6 space-y-4">
           <Show when={step() === 1}>
@@ -158,6 +176,124 @@ export function SetupView(props: {
 
           <Show when={step() === 3}>
             <div>
+              <div class="text-xs font-medium text-zinc-400">发信服务配置（可选，可跳过）</div>
+              <div class="mt-1 text-[11px] text-zinc-500">
+                为域名 {selectedDomain() || domainInput().trim().toLowerCase() || "当前域名"} 选择发信商；若暂不配置，前端将隐藏写邮件入口。
+              </div>
+              <div class="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setSendProvider("none")}
+                  class="w-full rounded-lg border px-3 py-2.5 text-left text-xs transition"
+                  classList={{
+                    "border-indigo-400/50 bg-indigo-500/15 text-indigo-100": sendProvider() === "none",
+                    "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10": sendProvider() !== "none",
+                  }}
+                >
+                  <div class="font-semibold">暂不配置（仅收信）</div>
+                  <div class="mt-0.5 text-[11px] text-zinc-400">稍后可在管理员设置中随时为各域名启用发信</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSendProvider("cloudflare")}
+                  class="w-full rounded-lg border px-3 py-2.5 text-left text-xs transition"
+                  classList={{
+                    "border-indigo-400/50 bg-indigo-500/15 text-indigo-100": sendProvider() === "cloudflare",
+                    "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10": sendProvider() !== "cloudflare",
+                  }}
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="font-semibold">Cloudflare Email Service</span>
+                    <span
+                      class="rounded px-1.5 py-0.5 text-[10px]"
+                      classList={{
+                        "bg-emerald-500/15 text-emerald-300": Boolean(capabilities()?.cloudflare),
+                        "bg-amber-500/15 text-amber-300": !capabilities()?.cloudflare,
+                      }}
+                    >
+                      {capabilities()?.cloudflare ? "已检测到 EMAIL 绑定" : "需配置 EMAIL 绑定"}
+                    </span>
+                  </div>
+                  <div class="mt-0.5 text-[11px] text-zinc-400">通过 Cloudflare Workers send_email 绑定发送</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSendProvider("resend")}
+                  class="w-full rounded-lg border px-3 py-2.5 text-left text-xs transition"
+                  classList={{
+                    "border-indigo-400/50 bg-indigo-500/15 text-indigo-100": sendProvider() === "resend",
+                    "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10": sendProvider() !== "resend",
+                  }}
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="font-semibold">Resend</span>
+                    <span
+                      class="rounded px-1.5 py-0.5 text-[10px]"
+                      classList={{
+                        "bg-emerald-500/15 text-emerald-300": Boolean(capabilities()?.resend),
+                        "bg-amber-500/15 text-amber-300": !capabilities()?.resend,
+                      }}
+                    >
+                      {capabilities()?.resend ? "已检测到 RESEND_API_KEY" : "需配置 RESEND_API_KEY Secret"}
+                    </span>
+                  </div>
+                  <div class="mt-0.5 text-[11px] text-zinc-400">通过 Resend REST API 发送（密钥由 Worker Secret 托管）</div>
+                </button>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                disabled={loading()}
+                class="w-full rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-60"
+                onClick={async () => {
+                  const d = (selectedDomain() || domainInput()).trim().toLowerCase();
+                  if (!d) {
+                    setStep(4);
+                    return;
+                  }
+                  setLoading(true);
+                  setError("");
+                  try {
+                    const res = await fetch("/api/setup/domains", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ domain: d, sendProvider: sendProvider() }),
+                    });
+                    if (!res.ok) throw new Error(String(res.status));
+                    setStep(4);
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "保存失败");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                下一步
+              </button>
+              <button
+                type="button"
+                class="w-full rounded-md bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10"
+                onClick={() => {
+                  setSendProvider("none");
+                  setError("");
+                  setStep(4);
+                }}
+              >
+                跳过
+              </button>
+              <button
+                type="button"
+                class="rounded-md bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-white/10"
+                onClick={() => setStep(2)}
+              >
+                上一步
+              </button>
+            </div>
+          </Show>
+
+          <Show when={step() === 4}>
+            <div>
               <div class="text-xs font-medium text-zinc-400">主邮箱</div>
               <div class="mt-2 flex gap-2">
                 <input
@@ -192,7 +328,7 @@ export function SetupView(props: {
           </button>
           <button
             class="w-full rounded-md bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/10"
-            onClick={() => setStep(2)}
+            onClick={() => setStep(3)}
           >
             上一步
           </button>

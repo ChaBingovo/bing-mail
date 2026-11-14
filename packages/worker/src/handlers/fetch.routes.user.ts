@@ -2,6 +2,13 @@ import type { Env } from "../env";
 import { json, text } from "../http";
 import { hashPassword, verifyPassword } from "../auth";
 import { logError } from "../log";
+import {
+  canDomainSend,
+  extractDomainFromAddress,
+  normalizeSendProvider,
+  OutboundNotConfiguredError,
+  sendOutboundEmail,
+} from "../outbound";
 import * as S from "./fetch.shared";
 
 const MAX_RECIPIENTS = 20;
@@ -38,10 +45,37 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     if (authRes instanceof Response) return authRes;
     const auth = authRes;
 
-    const row = await env.DB.prepare("SELECT address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+    const row = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
       .bind(auth.sub)
-      .first<{ address: string }>();
-    return json({ address: row?.address || null });
+      .first<{ id: string; address: string }>();
+    if (!row?.address) {
+      return json({ address: null, canSend: false, sendableAddresses: [] });
+    }
+
+    const [aliasRows, domainRows] = await Promise.all([
+      env.DB.prepare("SELECT address FROM mailbox_aliases WHERE mailbox_id = ?1 AND is_active = 1 ORDER BY created_at ASC")
+        .bind(row.id)
+        .all<{ address: string }>(),
+      env.DB.prepare("SELECT domain, send_provider FROM domains WHERE is_active = 1")
+        .all<{ domain: string; send_provider: string }>(),
+    ]);
+
+    const providerByDomain = new Map<string, string>();
+    for (const d of domainRows.results) {
+      providerByDomain.set(d.domain.toLowerCase(), d.send_provider);
+    }
+
+    const candidates = [row.address, ...aliasRows.results.map((a) => a.address)];
+    const sendableAddresses = candidates.filter((addr) => {
+      const dom = extractDomainFromAddress(addr);
+      return canDomainSend(env, providerByDomain.get(dom));
+    });
+
+    return json({
+      address: row.address,
+      canSend: sendableAddresses.length > 0,
+      sendableAddresses,
+    });
   }
 
   if (pathname === "/api/user/send" && request.method === "POST") {
@@ -88,7 +122,12 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
       return json({ error: "body_too_large" }, { status: 413 });
     }
 
-    if (!env.EMAIL || typeof env.EMAIL.send !== "function") {
+    const fromDomain = extractDomainFromAddress(from);
+    const domainRow = await env.DB.prepare("SELECT send_provider FROM domains WHERE domain = ?1 AND is_active = 1 LIMIT 1")
+      .bind(fromDomain)
+      .first<{ send_provider: string }>();
+    const sendProvider = normalizeSendProvider(domainRow?.send_provider) ?? "none";
+    if (!canDomainSend(env, sendProvider)) {
       return json({ error: "mail_not_configured" }, { status: 503 });
     }
 
@@ -107,18 +146,21 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     // "发送失败" and re-sends an already-delivered message.
     let messageId: string | null = null;
     try {
-      const result = await env.EMAIL.send({
+      const result = await sendOutboundEmail(env, sendProvider, {
         from,
         to: recipients,
         subject,
         text: textBody || undefined,
         html: htmlBody || undefined,
       });
-      messageId = result?.messageId ?? null;
+      messageId = result.messageId;
       // Counted only once the provider accepted it, so a failed attempt does not
       // eat the user's daily quota.
       await S.sendRateRecord(env, auth.sub);
     } catch (err) {
+      if (err instanceof OutboundNotConfiguredError) {
+        return json({ error: "mail_not_configured" }, { status: 503 });
+      }
       const reason = err instanceof Error ? err.message : String(err);
       logError({ event: "send_message_failed", requestId, error: reason });
       // Keep a FAILED row so the attempt is visible instead of silently lost.

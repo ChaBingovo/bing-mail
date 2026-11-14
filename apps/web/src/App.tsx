@@ -184,6 +184,7 @@ function ConsoleView() {
     displayAddress: session.displayAddress,
     setDisplayAddress: session.setDisplayAddress,
     messages: () => session.messages() || [],
+    canSend: () => session.canSend(),
   });
 
   /** Server-side FTS search for the Spotlight palette. */
@@ -256,6 +257,7 @@ function ConsoleView() {
       onRefresh={() => session.refetchMessages()}
       onLogout={() => app.logout()}
       onOpenSpotlight={() => setSpotlightOpen(true)}
+      canSend={session.canSend()}
     />
   );
 
@@ -284,6 +286,7 @@ function ConsoleView() {
                   userId={app.currentUser()?.id || ""}
                   mailbox={session.mailboxAddress() || ""}
                   aliases={session.aliases()?.aliases || []}
+                  sendableAddresses={session.sendableAddresses()}
                   prefill={composePrefill()}
                   onConsumePrefill={() => setComposePrefill(null)}
                   onOpenSent={() => app.setPage("sent")}
@@ -294,13 +297,14 @@ function ConsoleView() {
                   api={app.api}
                   onResend={startResend}
                   onNewCompose={() => app.setPage("compose")}
+                  canSend={session.canSend()}
                 />
               </Show>
               <Show when={app.page() === "settings"}>
                 <UserSettingsView user={app.currentUser()!} api={app.api} />
               </Show>
               <Show when={app.page() === "admin"}>
-                <AdminSettingsView api={app.api} />
+                <AdminSettingsView api={app.api} onDomainsChanged={() => void session.refetchMailbox()} />
               </Show>
             </div>
           }
@@ -324,8 +328,8 @@ function ConsoleView() {
               detail={session.detail() || null}
               html={session.html() || ""}
               text={session.text() || ""}
-              onReply={startReply}
-              onForward={startForward}
+              onReply={session.canSend() ? startReply : undefined}
+              onForward={session.canSend() ? startForward : undefined}
               onRetry={(id) => session.retryMessage(id)}
               onDelete={(id) => session.deleteMessage(id)}
             />
