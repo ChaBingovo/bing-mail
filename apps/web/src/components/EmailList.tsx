@@ -13,12 +13,26 @@ export function EmailList(props: {
   loadingMore?: boolean;
   loadMoreError?: string;
   onLoadMore?: () => void;
+  onMarkAllRead?: () => void;
+  markingAllRead?: boolean;
 }) {
   return (
     <section class="h-full border-r border-white/10 bg-white/0 p-2">
-      <div class="px-2 py-2 text-xs font-medium text-zinc-400">
-        <Show when={props.mailboxAddress} fallback={"全部收件箱"}>
-          {props.mailboxAddress}
+      <div class="flex items-center justify-between gap-2 px-2 py-2 text-xs font-medium text-zinc-400">
+        <span class="min-w-0 truncate">
+          <Show when={props.mailboxAddress} fallback={"全部收件箱"}>
+            {props.mailboxAddress}
+          </Show>
+        </span>
+        <Show when={props.onMarkAllRead}>
+          <button
+            type="button"
+            disabled={Boolean(props.markingAllRead)}
+            class="spring-colors shrink-0 rounded-lg bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-white/10 disabled:opacity-50"
+            onClick={() => props.onMarkAllRead?.()}
+          >
+            {props.markingAllRead ? "处理中…" : "一键已读"}
+          </button>
         </Show>
       </div>
 
@@ -29,15 +43,27 @@ export function EmailList(props: {
               {(m) => {
                 const code = m.aiCode;
                 const service = m.aiService;
+                const unread = () => !m.isRead;
                 return (
                   <button
                     class="pressable spring-colors mt-2 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-left hover:bg-white/10"
                     classList={{ "bg-white/10": props.selectedId === m.id }}
                     onClick={() => props.setSelectedId(m.id)}
                   >
-                    <div class="flex items-baseline justify-between gap-2">
-                      <div class="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">
-                        {m.subject || "(无主题)"}
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        <Show when={unread()}>
+                          <span class="h-2 w-2 shrink-0 rounded-full bg-indigo-400" title="未读" />
+                        </Show>
+                        <div
+                          class="min-w-0 flex-1 truncate text-sm"
+                          classList={{
+                            "font-semibold text-zinc-100": unread(),
+                            "font-normal text-zinc-300": !unread(),
+                          }}
+                        >
+                          {m.subject || "(无主题)"}
+                        </div>
                       </div>
                       <div class="shrink-0 text-xs text-zinc-500">{formatTime(m.receivedAt)}</div>
                     </div>

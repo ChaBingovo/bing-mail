@@ -1,6 +1,8 @@
 /** Mirrors the messages.status CHECK constraint in packages/db. */
 export type MessageStatus = "PENDING" | "SUCCESS" | "FAILED";
 
+export type RedDotConnectionState = "connected" | "reconnecting" | "disconnected";
+
 export type MessageMeta = {
   id: string;
   status?: MessageStatus;
@@ -9,6 +11,7 @@ export type MessageMeta = {
   toAddress?: string | null;
   subject?: string | null;
   snippet?: string | null;
+  isRead?: boolean;
   aiCode?: string | null;
   aiService?: string | null;
   receivedAt?: number;
@@ -34,6 +37,7 @@ export type MessageDetail = {
   snippet: string | null;
   receivedAt: number;
   parsedAt: number | null;
+  isRead?: boolean;
   hasText: boolean;
   hasHtml: boolean;
   aiCode: string | null;

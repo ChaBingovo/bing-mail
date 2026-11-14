@@ -19,6 +19,7 @@ export function EmailViewer(props: {
   text: string;
   onReply?: (detail: MessageDetail) => void;
   onForward?: (detail: MessageDetail) => void;
+  onToggleRead?: (id: string, read: boolean) => Promise<void> | void;
   onRetry?: (id: string) => Promise<void> | void;
   onDelete?: (id: string) => Promise<void> | void;
 }) {
@@ -100,6 +101,15 @@ export function EmailViewer(props: {
                     onClick={() => props.onForward?.(d())}
                   >
                     转发
+                  </button>
+                </Show>
+                <Show when={Boolean(props.onToggleRead)}>
+                  <button
+                    type="button"
+                    class="spring-colors pressable rounded-xl bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-white/10"
+                    onClick={() => props.onToggleRead?.(d().id, d().isRead === false)}
+                  >
+                    {d().isRead === false ? "标为已读" : "标为未读"}
                   </button>
                 </Show>
                 <Show when={props.onDelete}>

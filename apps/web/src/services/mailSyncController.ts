@@ -1,4 +1,4 @@
-import type { RedDotResponse } from "../types";
+import type { RedDotConnectionState, RedDotResponse } from "../types";
 
 export type MailSyncController = {
   start: () => void;
@@ -14,6 +14,7 @@ export function createMailSyncController(params: {
   onUnreadChange: (address: string, count: number) => void;
   /** Server-reported read marker, so the UI can tell "new" from "history". */
   onReadMarker?: (since: number) => void;
+  onConnectionStateChange?: (state: RedDotConnectionState) => void;
   onHint: () => void;
   onRefetchRequested: () => void;
 }) {
@@ -66,6 +67,7 @@ export function createMailSyncController(params: {
       // response reports the server's own marker plus the unread count it implies.
       const data = await params.apiJson<RedDotResponse>("/api/user/red-dot");
       pollBackoffMs = 0;
+      params.onConnectionStateChange?.("connected");
       params.onUnreadChange(address, data.newCount);
       params.onReadMarker?.(data.since || 0);
       if (data.newCount > 0 && params.getIsVisible()) {
@@ -78,6 +80,7 @@ export function createMailSyncController(params: {
       }
     } catch {
       pollBackoffMs = Math.min(pollBackoffMs ? pollBackoffMs * 2 : 1500, 30000);
+      params.onConnectionStateChange?.(pollBackoffMs >= 6000 ? "disconnected" : "reconnecting");
     } finally {
       inflight = false;
       if (queued) {
@@ -207,6 +210,7 @@ export function createMailSyncController(params: {
     if (!address) return;
     if (stopped) {
       stopped = false;
+      params.onConnectionStateChange?.("reconnecting");
       const sessionKey = params.getSessionKey ? params.getSessionKey() : "";
       resetForKey(`${address}|${sessionKey}`);
       return;
@@ -221,6 +225,7 @@ export function createMailSyncController(params: {
     timer = null;
     closeWs();
     wsReady = false;
+    params.onConnectionStateChange?.("disconnected");
   };
 
   return { start, stop } satisfies MailSyncController;

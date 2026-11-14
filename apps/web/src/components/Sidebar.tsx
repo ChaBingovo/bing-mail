@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { AuthUser } from "../types";
+import type { AuthUser, RedDotConnectionState } from "../types";
 import type { AppPage } from "../context/AppContext";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
@@ -16,6 +16,7 @@ export function Sidebar(props: {
   onLogout: () => void;
   onOpenSpotlight: () => void;
   canSend?: boolean;
+  connectionState?: RedDotConnectionState;
 }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   let menuRootEl: HTMLDivElement | undefined;
@@ -91,8 +92,14 @@ export function Sidebar(props: {
             <button
               type="button"
               aria-label="账号与收件箱筛选"
-              title={`${props.user.username} · ${filterLabel()}`}
-              class="pressable spring-colors flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/10 text-zinc-200 hover:bg-white/20"
+              title={`${props.user.username} · ${filterLabel()} · ${
+                props.connectionState === "connected"
+                  ? "已连接 red-dot"
+                  : props.connectionState === "disconnected"
+                    ? "未连接 red-dot"
+                    : "正在连接 red-dot"
+              }`}
+              class="pressable spring-colors relative flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/10 text-zinc-200 hover:bg-white/20"
               classList={{ "ring-2 ring-indigo-400/40 bg-white/20": menuOpen() }}
               onClick={() => setMenuOpen((v) => !v)}
             >
@@ -100,6 +107,14 @@ export function Sidebar(props: {
                 <circle cx="12" cy="8.5" r="3.5" />
                 <path stroke-linecap="round" d="M5.5 19.5c1.5-3 4-4.5 6.5-4.5s5 1.5 6.5 4.5" />
               </svg>
+              <span
+                class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-zinc-950"
+                classList={{
+                  "bg-emerald-400": props.connectionState === "connected",
+                  "bg-amber-400": !props.connectionState || props.connectionState === "reconnecting",
+                  "bg-rose-500": props.connectionState === "disconnected",
+                }}
+              />
             </button>
 
             <Show when={menuOpen()}>

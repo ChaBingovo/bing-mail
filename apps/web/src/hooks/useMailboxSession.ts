@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { appendPage, dropMessage, listMessages, mergeFirstPage, type MessagePage } from "../services/messagePages";
 import type { AppContextValue } from "../context/AppContext";
-import type { MessageDetail, MessageMeta, RedDotResponse } from "../types";
+import type { MessageDetail, MessageMeta, RedDotConnectionState, RedDotResponse } from "../types";
 import { clearLastSeen, getLastSeen } from "../services/lastSeen";
 
 export function useMailboxSession(app: AppContextValue, getIsVisible: () => boolean) {
@@ -70,7 +70,7 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     return { address, filter: displayAddress().trim().toLowerCase() };
   });
 
-  const [firstPage, { refetch: refetchMessages }] = createResource(messagesQueryKey, async (key) => {
+  const [firstPage, { refetch: refetchMessages, mutate: mutateFirstPage }] = createResource(messagesQueryKey, async (key) => {
     if (!key) return { messages: [] as MessageMeta[], nextCursor: null } satisfies MessagePage;
     const filterParam = key.filter ? `&address=${encodeURIComponent(key.filter)}` : "";
     const data = await app.api.apiJson<MessagePage>(`/api/user/messages?limit=${FIRST_PAGE_LIMIT}${filterParam}`);
@@ -131,18 +131,85 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
     return app.selectedId();
   });
 
-  const [detail, { refetch: refetchDetail }] = createResource(selectedId, async (id) => {
+  const updateLocalMessageRead = (id: string, read: boolean) => {
+    mutateFirstPage((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        messages: prev.messages.map((m) => (m.id === id ? { ...m, isRead: read } : m)),
+      };
+    });
+    setMorePages((pages) =>
+      pages.map((p) => ({
+        ...p,
+        messages: p.messages.map((m) => (m.id === id ? { ...m, isRead: read } : m)),
+      })),
+    );
+  };
+
+  const [detail, { refetch: refetchDetail, mutate: mutateDetail }] = createResource(selectedId, async (id) => {
     if (!id || app.page() !== "inbox") return null;
+    const prevMeta = displayedMessages().find((m) => m.id === id);
+    const wasUnread = prevMeta ? !prevMeta.isRead : false;
     const data = await app.api.apiJson<{ message: MessageDetail }>(`/api/messages/${encodeURIComponent(id)}`);
+    updateLocalMessageRead(id, true);
+    if (wasUnread) {
+      const addr = mailboxAddress() || "";
+      if (addr) app.setUnseen(addr, Math.max(0, currentUnseen() - 1));
+    }
     return data.message;
   });
 
   /** Server-owned read marker; `since` in the red-dot response is authoritative. */
-  const [readMarker, setReadMarker] = createSignal(0);
+  const [readMarker, setReadMarkerRaw] = createSignal(0);
+  const [readMarkerLoaded, setReadMarkerLoaded] = createSignal(false);
+  const [connectionState, setConnectionState] = createSignal<RedDotConnectionState>("reconnecting");
+  const setReadMarker = (since: number) => {
+    setReadMarkerRaw(since);
+    setReadMarkerLoaded(true);
+  };
   /** Highest receivedAt seen locally, used to advance the read marker. */
   const [observedMax, setObservedMax] = createSignal(0);
   /** Guards the one-time upload of the legacy browser-local marker. */
   let legacyMarkerPushed = false;
+
+  const [markingAllRead, setMarkingAllRead] = createSignal(false);
+  const markAllRead = async () => {
+    if (markingAllRead()) return;
+    setMarkingAllRead(true);
+    try {
+      const filter = displayAddress().trim().toLowerCase();
+      const data = await app.api.apiJson<{ since?: number; newCount?: number }>("/api/user/read-all", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address: filter || "" }),
+      });
+      mutateFirstPage((prev) =>
+        prev ? { ...prev, messages: prev.messages.map((m) => ({ ...m, isRead: true })) } : prev,
+      );
+      setMorePages((pages) =>
+        pages.map((p) => ({ ...p, messages: p.messages.map((m) => ({ ...m, isRead: true })) })),
+      );
+      mutateDetail((prev) => (prev ? { ...prev, isRead: true } : prev));
+      if (typeof data.since === "number") setReadMarker(data.since);
+      const addr = mailboxAddress() || "";
+      if (addr) app.setUnseen(addr, data.newCount ?? 0);
+    } finally {
+      setMarkingAllRead(false);
+    }
+  };
+
+  const toggleMessageRead = async (id: string, read: boolean) => {
+    const action = read ? "read" : "unread";
+    await app.api.apiJson(`/api/messages/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    updateLocalMessageRead(id, read);
+    mutateDetail((prev) => (prev && prev.id === id ? { ...prev, isRead: read } : prev));
+    const addr = mailboxAddress() || "";
+    if (addr) {
+      const delta = read ? -1 : 1;
+      app.setUnseen(addr, Math.max(0, currentUnseen() + delta));
+    }
+  };
 
   /** Re-queue a FAILED message for parsing; refreshes both the row and the list. */
   const retryMessage = async (id: string) => {
@@ -181,7 +248,6 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
 
     const max = list.reduce((acc, m) => Math.max(acc, m.receivedAt || 0), 0);
     if (max > observedMax()) setObservedMax(max);
-    app.setUnseen(addr, 0);
   });
 
   // One-time migration: browsers that only knew the localStorage marker push it to
@@ -224,7 +290,13 @@ export function useMailboxSession(app: AppContextValue, getIsVisible: () => bool
 
   return {
     readMarker,
+    readMarkerLoaded,
     setReadMarker,
+    connectionState,
+    setConnectionState,
+    markAllRead,
+    markingAllRead,
+    toggleMessageRead,
     mailboxAddress,
     canSend,
     sendableAddresses,

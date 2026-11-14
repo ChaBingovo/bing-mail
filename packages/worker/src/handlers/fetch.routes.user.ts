@@ -313,6 +313,42 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     return json({ address: mailbox.address, since, ...unread }, { headers: { "cache-control": "no-store" } });
   }
 
+  if (pathname === "/api/user/read-all" && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const auth = authRes;
+
+    const mailbox = await env.DB.prepare("SELECT id, address FROM mailboxes WHERE user_id = ?1 AND is_active = 1 LIMIT 1")
+      .bind(auth.sub)
+      .first<{ id: string; address: string }>();
+    if (!mailbox?.id) return json({ error: "mailbox_missing" }, { status: 409 });
+
+    const body = await S.readJsonBody(request);
+    const rawAddress = (S.getLowerStringField(body, "address") || "").trim();
+    let filter: { address: string; includeNull?: boolean } | null = null;
+    if (rawAddress && rawAddress !== "*" && rawAddress !== "all") {
+      if (rawAddress === mailbox.address.toLowerCase()) {
+        filter = { address: mailbox.address.toLowerCase(), includeNull: true };
+      } else {
+        const alias = await env.DB.prepare(
+          "SELECT 1 AS ok FROM mailbox_aliases WHERE mailbox_id = ?1 AND address = ?2 AND is_active = 1 LIMIT 1",
+        )
+          .bind(mailbox.id, rawAddress)
+          .first<{ ok: 1 }>();
+        if (!alias?.ok) return json({ error: "mailbox_not_found" }, { status: 404 });
+        filter = { address: rawAddress, includeNull: false };
+      }
+    }
+
+    const updatedCount = await S.markMailboxMessagesRead(env, mailbox.id, filter);
+    const since = await S.getMailboxReadState(env, mailbox.id);
+    const unread = await S.getMailboxUnread(env, mailbox.id);
+    return json(
+      { ok: true, updatedCount, address: mailbox.address, since, ...unread },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (pathname === "/api/user/ws" && request.method === "GET") {
     const authRes = await S.requireAuthWsOr401(request, env);
     if (authRes instanceof Response) return authRes;

@@ -138,6 +138,7 @@ function ConsoleView() {
     mailboxAddress: () => session.mailboxAddress() || "",
     messages: () => session.messages() || [],
     readMarker: () => session.readMarker(),
+    markerLoaded: () => session.readMarkerLoaded(),
   });
 
   const sync = createMailSyncController({
@@ -146,7 +147,8 @@ function ConsoleView() {
     getIsVisible: isVisible,
     apiJson: app.api.apiJson,
     onUnreadChange: (address, count) => app.setUnseen(address, count),
-    onReadMarker: (since) => session.setReadMarker((current) => Math.max(current, since)),
+    onReadMarker: (since) => session.setReadMarker(Math.max(session.readMarker(), since)),
+    onConnectionStateChange: session.setConnectionState,
     onHint: notifications.bumpHint,
     onRefetchRequested: () => session.refetchMessages(),
   });
@@ -258,6 +260,7 @@ function ConsoleView() {
       onLogout={() => app.logout()}
       onOpenSpotlight={() => setSpotlightOpen(true)}
       canSend={session.canSend()}
+      connectionState={session.connectionState()}
     />
   );
 
@@ -322,6 +325,8 @@ function ConsoleView() {
               loadingMore={session.loadingMore()}
               loadMoreError={session.loadMoreError()}
               onLoadMore={() => void session.loadMoreMessages()}
+              onMarkAllRead={() => void session.markAllRead()}
+              markingAllRead={session.markingAllRead()}
             />
 
             <EmailViewer
@@ -330,6 +335,7 @@ function ConsoleView() {
               text={session.text() || ""}
               onReply={session.canSend() ? startReply : undefined}
               onForward={session.canSend() ? startForward : undefined}
+              onToggleRead={(id, read) => void session.toggleMessageRead(id, read)}
               onRetry={(id) => session.retryMessage(id)}
               onDelete={(id) => session.deleteMessage(id)}
             />

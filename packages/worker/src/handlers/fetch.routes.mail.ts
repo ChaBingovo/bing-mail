@@ -346,6 +346,10 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         is_inline: number;
       }>();
 
+    if (!row.read_at) {
+      await S.setMessageReadState(env, id, true);
+    }
+
     return json({
       message: {
         id: row.id,
@@ -358,6 +362,7 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         snippet: row.snippet,
         receivedAt: row.received_at,
         parsedAt: row.parsed_at,
+        isRead: true,
         hasText: Boolean(row.text_plain),
         hasHtml: Boolean(row.html_inline || row.html_r2_key),
         aiCode: row.ai_code ?? null,
@@ -373,6 +378,18 @@ export async function handleMailRoutes(request: Request, env: Env, url: URL, pat
         })),
       },
     });
+  }
+
+  const msgReadStateMatch = pathname.match(/^\/api\/messages\/([^/]+)\/(read|unread)$/);
+  if (msgReadStateMatch && request.method === "POST") {
+    const authRes = await S.requireAuthOr401(request, env);
+    if (authRes instanceof Response) return authRes;
+    const id = decodeURIComponent(msgReadStateMatch[1]);
+    const read = msgReadStateMatch[2] === "read";
+    const row = await S.requireMessageAccess(env, authRes, id);
+    if (!row) return json({ error: "message_not_found" }, { status: 404 });
+    await S.setMessageReadState(env, id, read);
+    return json({ id, isRead: read });
   }
 
   const msgAttachmentsMatch = pathname.match(/^\/api\/messages\/([^/]+)\/attachments$/);

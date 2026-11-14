@@ -222,6 +222,7 @@ export type MessageListRow = {
   subject: string | null;
   snippet: string | null;
   received_at: number;
+  read_at?: number | null;
   ai_code?: string | null;
   ai_service?: string | null;
 };
@@ -236,6 +237,7 @@ export type MessageListPage = {
     subject: string | null;
     snippet: string | null;
     receivedAt: number;
+    isRead: boolean;
     aiCode: string | null;
     aiService: string | null;
   }[];
@@ -257,7 +259,7 @@ export async function listMessagesPage(
   filter?: { address: string; includeNull?: boolean } | null,
 ): Promise<MessageListPage> {
   const columns =
-    "id, status, from_name, from_address, to_address, subject, snippet, received_at, ai_code, ai_service FROM messages";
+    "id, status, from_name, from_address, to_address, subject, snippet, received_at, read_at, ai_code, ai_service FROM messages";
   const where = ["mailbox_id = ?1"];
   const binds: (string | number)[] = [mailboxId];
   let next = 2;
@@ -297,6 +299,7 @@ export async function listMessagesPage(
       subject: r.subject,
       snippet: r.snippet,
       receivedAt: r.received_at,
+      isRead: Boolean(r.read_at),
       aiCode: r.ai_code ?? null,
       aiService: r.ai_service ?? null,
     })),
@@ -552,7 +555,7 @@ export async function requireMailboxAccess(env: Env, auth: { sub: string; isAdmi
 
 export async function requireMessageAccess(env: Env, auth: { sub: string; isAdmin?: boolean }, messageId: string) {
   const row = await env.DB.prepare(
-    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.to_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.text_plain, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
+    "SELECT m.id, m.mailbox_id, m.status, m.from_name, m.from_address, m.to_address, m.subject, m.snippet, m.received_at, m.parsed_at, m.read_at, m.text_plain, m.html_r2_key, m.html_inline, m.ai_code, m.ai_service, mb.user_id AS mailbox_user_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?1 LIMIT 1",
   )
     .bind(messageId)
     .first<{
@@ -595,14 +598,12 @@ export type MailboxUnread = {
   latestNewReceivedAt: number | null;
 };
 
-/** Unread counts are derived server-side from the mailbox read marker. */
+/** Unread counts are derived server-side from per-message read_at. */
 export async function getMailboxUnread(env: Env, mailboxId: string): Promise<MailboxUnread> {
-  const since = await getMailboxReadState(env, mailboxId);
-
   const stat = await env.DB.prepare(
-    "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND received_at > ?2",
+    "SELECT COUNT(1) AS new_count, MAX(received_at) AS latest_new_received_at FROM messages WHERE mailbox_id = ?1 AND read_at IS NULL",
   )
-    .bind(mailboxId, since)
+    .bind(mailboxId)
     .first<{ new_count: number; latest_new_received_at: number | null }>();
 
   const latest = await env.DB.prepare("SELECT MAX(received_at) AS latest_received_at FROM messages WHERE mailbox_id = ?1")
@@ -614,6 +615,46 @@ export async function getMailboxUnread(env: Env, mailboxId: string): Promise<Mai
     latestReceivedAt: latest?.latest_received_at ?? null,
     latestNewReceivedAt: stat?.latest_new_received_at ?? null,
   };
+}
+
+export async function setMessageReadState(env: Env, messageId: string, read: boolean) {
+  const readAt = read ? Date.now() : null;
+  if (read) {
+    await env.DB.prepare("UPDATE messages SET read_at = COALESCE(read_at, ?2) WHERE id = ?1")
+      .bind(messageId, readAt)
+      .run();
+  } else {
+    await env.DB.prepare("UPDATE messages SET read_at = NULL WHERE id = ?1").bind(messageId).run();
+  }
+  return read;
+}
+
+export async function markMailboxMessagesRead(
+  env: Env,
+  mailboxId: string,
+  filter?: { address: string; includeNull?: boolean } | null,
+) {
+  const now = Date.now();
+  const where = ["mailbox_id = ?1", "read_at IS NULL"];
+  const binds: (string | number)[] = [mailboxId];
+  if (filter?.address) {
+    if (filter.includeNull) {
+      where.push("(to_address = ?2 OR to_address IS NULL)");
+    } else {
+      where.push("to_address = ?2");
+    }
+    binds.push(filter.address);
+    binds.push(now);
+    const res = await env.DB.prepare(`UPDATE messages SET read_at = ?3 WHERE ${where.join(" AND ")}`)
+      .bind(...binds)
+      .run();
+    return Number(res.meta?.changes ?? 0);
+  }
+  const res = await env.DB.prepare(`UPDATE messages SET read_at = ?2 WHERE ${where.join(" AND ")}`)
+    .bind(mailboxId, now)
+    .run();
+  await markMailboxRead(env, mailboxId, now);
+  return Number(res.meta?.changes ?? 0);
 }
 
 /**

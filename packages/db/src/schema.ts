@@ -110,6 +110,7 @@ export const messages = sqliteTable(
     htmlInline: text("html_inline"),
     htmlR2Key: text("html_r2_key"),
     parsedAt: integer("parsed_at", { mode: "timestamp_ms" }),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
     lockId: text("lock_id"),
     lockedAt: integer("locked_at", { mode: "timestamp_ms" }),
   },
