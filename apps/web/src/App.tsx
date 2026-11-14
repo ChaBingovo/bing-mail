@@ -278,7 +278,7 @@ function ConsoleView() {
   };
 
   return (
-    <div class="relative h-dvh w-full overflow-hidden p-2 sm:p-4">
+    <div class="relative h-dvh w-full overflow-hidden p-0 sm:p-4">
       <Show when={notifications.island()}>
         <NotificationIsland data={notifications.island()!} closing={notifications.islandClosing()} onClose={notifications.closeIsland} />
       </Show>
@@ -290,7 +290,7 @@ function ConsoleView() {
         search={searchMessages}
       />
 
-      <div class="glass-shell flex h-full flex-col overflow-hidden rounded-[20px] sm:rounded-[28px]">
+      <div class="glass-shell flex h-full flex-col overflow-hidden rounded-none border-0 sm:rounded-[28px] sm:border">
         <header class="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-white/5 px-3 py-2.5 md:hidden">
           <div class="flex min-w-0 items-center gap-2">
             <button
