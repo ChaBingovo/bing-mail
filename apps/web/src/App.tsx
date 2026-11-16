@@ -148,7 +148,7 @@ function GuestView() {
         when={!setup.loading}
         fallback={
           <div class="flex h-dvh w-full items-center justify-center p-6">
-            <div class="glass-panel rounded-2xl px-6 py-4 text-sm text-[var(--text-secondary)]">
+            <div class="glass-panel rounded-2xl px-6 py-4 text-sm text-zinc-300">
               正在检查服务状态…
             </div>
           </div>
@@ -159,14 +159,14 @@ function GuestView() {
           fallback={
             <div class="flex h-dvh w-full items-center justify-center p-6">
               <div class="glass-panel w-full max-w-lg rounded-2xl p-6 space-y-4">
-                <div class="text-base font-semibold text-[var(--text-primary)]">服务尚未就绪</div>
-                <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-[var(--text-primary)]">
+                <div class="text-base font-semibold text-zinc-100">服务尚未就绪</div>
+                <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-zinc-200">
                   {setupErrorReason()}
                 </div>
                 <div class="flex items-center justify-end">
                   <button
                     type="button"
-                    class="rounded-xl bg-[var(--accent)] px-4 py-2 text-xs font-medium text-white transition hover:opacity-90"
+                    class="rounded-md bg-indigo-500/15 px-4 py-2 text-sm font-semibold text-indigo-200 transition hover:bg-indigo-500/20"
                     onClick={() => void refetchSetup()}
                   >
                     重新检测
