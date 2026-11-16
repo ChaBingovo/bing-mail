@@ -187,3 +187,115 @@ export async function verifyPassword(password: string, stored: string) {
   for (let i = 0; i < actual.length; i++) diff |= actual[i] ^ expected[i];
   return diff === 0;
 }
+
+export type DecryptedPasswordFields = {
+  password?: string;
+  oldPassword?: string;
+  newPassword?: string;
+};
+
+const AUTH_KEY_TTL_MS = 5 * 60 * 1000;
+
+async function payloadWrapKey(secret: string) {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(`bingmail:auth-payload-wrap:v1:${secret}`));
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function deriveSharedAesKey(privateKey: CryptoKey, publicKey: CryptoKey, usages: KeyUsage[]) {
+  const bits = await crypto.subtle.deriveBits({ name: "ECDH", public: publicKey }, privateKey, 256);
+  const keyMaterial = await crypto.subtle.digest("SHA-256", bits);
+  return crypto.subtle.importKey("raw", keyMaterial, { name: "AES-GCM" }, false, usages);
+}
+
+/** Issues an ephemeral ECDH P-256 public key paired with an AES-GCM wrapped private key token. */
+export async function issueAuthKeyPair(secret: string) {
+  const pair = (await crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveBits"],
+  )) as CryptoKeyPair;
+  const pubJwk = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
+  const privJwk = (await crypto.subtle.exportKey("jwk", pair.privateKey)) as JsonWebKey;
+  const payload = JSON.stringify({
+    d: privJwk.d,
+    x: privJwk.x,
+    y: privJwk.y,
+    exp: Date.now() + AUTH_KEY_TTL_MS,
+  });
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const wrapKey = await payloadWrapKey(secret);
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, wrapKey, encoder.encode(payload));
+  return {
+    keyToken: `${base64UrlEncodeBytes(iv)}.${base64UrlEncodeBytes(new Uint8Array(ct))}`,
+    publicKey: { kty: pubJwk.kty, crv: pubJwk.crv, x: pubJwk.x, y: pubJwk.y },
+    expiresInSec: Math.floor(AUTH_KEY_TTL_MS / 1000),
+  };
+}
+
+/** Decrypts client-side ECDH + AES-GCM encrypted password fields. */
+export async function decryptAuthPayload(encrypted: unknown, secret: string): Promise<DecryptedPasswordFields | null> {
+  if (!encrypted || typeof encrypted !== "object" || Array.isArray(encrypted)) return null;
+  const rec = encrypted as Record<string, unknown>;
+  const keyToken = typeof rec["keyToken"] === "string" ? rec["keyToken"] : "";
+  const ivB64 = typeof rec["iv"] === "string" ? rec["iv"] : "";
+  const ctB64 = typeof rec["ct"] === "string" ? rec["ct"] : "";
+  const clientPublicKey = rec["clientPublicKey"];
+  if (!keyToken || !ivB64 || !ctB64 || !clientPublicKey || typeof clientPublicKey !== "object") return null;
+
+  const tokenParts = keyToken.split(".");
+  if (tokenParts.length !== 2 || !tokenParts[0] || !tokenParts[1]) return null;
+
+  try {
+    const wrapKey = await payloadWrapKey(secret);
+    const wrappedPlain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlDecodeToBytes(tokenParts[0]) },
+      wrapKey,
+      base64UrlDecodeToBytes(tokenParts[1]),
+    );
+    const wrapped = JSON.parse(decoder.decode(wrappedPlain)) as {
+      d?: unknown;
+      x?: unknown;
+      y?: unknown;
+      exp?: unknown;
+    };
+    if (
+      typeof wrapped.d !== "string" ||
+      typeof wrapped.x !== "string" ||
+      typeof wrapped.y !== "string" ||
+      typeof wrapped.exp !== "number" ||
+      Date.now() > wrapped.exp
+    ) {
+      return null;
+    }
+
+    const serverPrivKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "EC", crv: "P-256", d: wrapped.d, x: wrapped.x, y: wrapped.y, ext: true },
+      { name: "ECDH", namedCurve: "P-256" },
+      false,
+      ["deriveBits"],
+    );
+    const clientPub = await crypto.subtle.importKey(
+      "jwk",
+      clientPublicKey as JsonWebKey,
+      { name: "ECDH", namedCurve: "P-256" },
+      false,
+      [],
+    );
+    const aesKey = await deriveSharedAesKey(serverPrivKey, clientPub, ["decrypt"]);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlDecodeToBytes(ivB64) },
+      aesKey,
+      base64UrlDecodeToBytes(ctB64),
+    );
+    const parsed = JSON.parse(decoder.decode(decrypted)) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return {
+      password: typeof parsed["password"] === "string" ? parsed["password"] : undefined,
+      oldPassword: typeof parsed["oldPassword"] === "string" ? parsed["oldPassword"] : undefined,
+      newPassword: typeof parsed["newPassword"] === "string" ? parsed["newPassword"] : undefined,
+    };
+  } catch {
+    return null;
+  }
+}

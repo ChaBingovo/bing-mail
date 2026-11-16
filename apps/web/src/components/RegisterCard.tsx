@@ -1,17 +1,25 @@
 import { Show, createMemo, createSignal } from "solid-js";
 import { DropdownSelect } from "./DropdownSelect";
+import { useTheme } from "../context/ThemeContext";
+import { TurnstileWidget } from "./TurnstileWidget";
 
 export function RegisterCard(props: {
   domains: string[];
-  onRegister: (username: string, password: string, mailboxLocal: string, domain: string) => void;
+  onRegister: (username: string, password: string, mailboxLocal: string, domain: string, turnstileToken?: string) => void;
   onGoLogin: () => void;
   loading: boolean;
   error: string;
+  turnstileRequired?: boolean;
+  turnstileSiteKey?: string;
+  turnstileResetNonce?: number;
 }) {
+  const theme = useTheme();
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [mailboxLocal, setMailboxLocal] = createSignal("");
   const [domain, setDomain] = createSignal("");
+  const [turnstileToken, setTurnstileToken] = createSignal("");
+  const needTurnstile = () => Boolean(props.turnstileRequired && props.turnstileSiteKey);
 
   const domainOptions = createMemo(() => {
     const items = [{ value: "", label: "选择域名" }];
@@ -71,6 +79,15 @@ export function RegisterCard(props: {
           </Show>
         </div>
 
+        <Show when={needTurnstile()}>
+          <TurnstileWidget
+            siteKey={props.turnstileSiteKey || ""}
+            theme={theme.resolvedTheme()}
+            resetNonce={props.turnstileResetNonce}
+            onToken={setTurnstileToken}
+          />
+        </Show>
+
         <Show when={props.error}>
           <div class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
             {props.error}
@@ -78,9 +95,9 @@ export function RegisterCard(props: {
         </Show>
 
         <button
-          disabled={props.loading || props.domains.length === 0}
+          disabled={props.loading || props.domains.length === 0 || (needTurnstile() && !turnstileToken())}
           class="w-full rounded-md bg-emerald-500/15 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
-          onClick={() => props.onRegister(username().trim(), password(), mailboxLocal().trim(), domain())}
+          onClick={() => props.onRegister(username().trim(), password(), mailboxLocal().trim(), domain(), turnstileToken() || undefined)}
         >
           创建账号
         </button>

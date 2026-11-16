@@ -207,3 +207,82 @@ test("/api/setup/domains defaults omitted sendProvider to none and rejects inval
   expect(badRes?.status).toBe(400);
   expect((await badRes!.json()) as Record<string, unknown>).toEqual({ error: "invalid_send_provider" });
 });
+
+test("/api/auth/login accepts ECDH + AES-GCM encrypted password payloads and rejects tampered ones", async () => {
+  const passwordHash = await hashPassword("correct-horse-battery-staple");
+  const { env } = createEnv(passwordHash);
+
+  const keyReq = new Request("https://mail.example.com/api/auth/key", { method: "GET" });
+  const keyRes = await handlePublicRoutes(keyReq, env, new URL(keyReq.url), "/api/auth/key");
+  expect(keyRes?.status).toBe(200);
+  const { keyToken, publicKey } = (await keyRes!.json()) as {
+    keyToken: string;
+    publicKey: JsonWebKey;
+  };
+  expect(typeof keyToken).toBe("string");
+  expect(publicKey.crv).toBe("P-256");
+
+  const clientPair = (await crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveBits"],
+  )) as CryptoKeyPair;
+  const serverPub = await crypto.subtle.importKey(
+    "jwk",
+    publicKey,
+    { name: "ECDH", namedCurve: "P-256" },
+    false,
+    [],
+  );
+  const clientPublicKey = (await crypto.subtle.exportKey("jwk", clientPair.publicKey)) as JsonWebKey;
+  const bits = await crypto.subtle.deriveBits({ name: "ECDH", public: serverPub }, clientPair.privateKey, 256);
+  const aesMaterial = await crypto.subtle.digest("SHA-256", bits);
+  const aesKey = await crypto.subtle.importKey("raw", aesMaterial, { name: "AES-GCM" }, false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    aesKey,
+    new TextEncoder().encode(JSON.stringify({ password: "correct-horse-battery-staple" })),
+  );
+  const toB64Url = (u: Uint8Array) =>
+    btoa(String.fromCharCode(...u)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+  const loginReq = new Request("https://mail.example.com/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      username: "alice",
+      encryptedAuth: {
+        keyToken,
+        clientPublicKey: {
+          kty: clientPublicKey.kty,
+          crv: clientPublicKey.crv,
+          x: clientPublicKey.x,
+          y: clientPublicKey.y,
+        },
+        iv: toB64Url(iv),
+        ct: toB64Url(new Uint8Array(ct)),
+      },
+    }),
+  });
+  const loginRes = await handlePublicRoutes(loginReq, env, new URL(loginReq.url), "/api/auth/login");
+  expect(loginRes?.status).toBe(200);
+  expect(loginRes?.headers.get("set-cookie")).toContain("bingmail_session=");
+
+  const badReq = new Request("https://mail.example.com/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      username: "alice",
+      encryptedAuth: {
+        keyToken: "tampered.token",
+        clientPublicKey,
+        iv: toB64Url(iv),
+        ct: toB64Url(new Uint8Array(ct)),
+      },
+    }),
+  });
+  const badRes = await handlePublicRoutes(badReq, env, new URL(badReq.url), "/api/auth/login");
+  expect(badRes?.status).toBe(400);
+  expect((await badRes!.json()) as Record<string, unknown>).toEqual({ error: "invalid_encrypted_payload" });
+});

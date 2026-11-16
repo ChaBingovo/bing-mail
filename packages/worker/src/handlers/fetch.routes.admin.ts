@@ -197,8 +197,10 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (authRes instanceof Response) return authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
     const username = S.toUsername(body);
-    const password = S.toPassword(body);
+    const password = pwRes.password;
     const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
     const mailboxLocal = S.normalizeLocalPart(S.getStringField(body, "mailboxLocal") || "");
     const isAdmin = S.getBooleanField(body, "isAdmin") || false;
@@ -260,7 +262,9 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (!userId) return json({ error: "invalid_user_id" }, { status: 400 });
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const password = S.toPassword(body);
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
+    const password = pwRes.password;
     if (typeof password !== "string" || password.length < 8 || password.length > 72) {
       return json({ error: "invalid_password" }, { status: 400 });
     }

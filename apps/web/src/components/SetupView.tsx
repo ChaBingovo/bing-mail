@@ -1,12 +1,16 @@
 import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import type { AuthUser } from "../types";
 import { DropdownSelect } from "./DropdownSelect";
+import { TurnstileWidget } from "./TurnstileWidget";
+import { useTheme } from "../context/ThemeContext";
+import { encryptAuthPayload } from "../utils/payloadCrypto";
 
 type SendProvider = "none" | "cloudflare" | "resend";
 
 export function SetupView(props: {
   onInitialized: (user: AuthUser) => void;
 }) {
+  const theme = useTheme();
   const [step, setStep] = createSignal<1 | 2 | 3 | 4>(1);
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
@@ -14,8 +18,25 @@ export function SetupView(props: {
   const [mailboxLocal, setMailboxLocal] = createSignal("");
   const [selectedDomain, setSelectedDomain] = createSignal("");
   const [sendProvider, setSendProvider] = createSignal<SendProvider>("none");
+  const [turnstileToken, setTurnstileToken] = createSignal("");
+  const [turnstileResetNonce, setTurnstileResetNonce] = createSignal(0);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
+
+  const [turnstileCfg] = createResource(async () => {
+    try {
+      const res = await fetch("/api/turnstile/config");
+      if (!res.ok) return { mode: "off", siteKey: "" };
+      const data = (await res.json()) as { mode?: string; siteKey?: string };
+      return {
+        mode: typeof data.mode === "string" ? data.mode : "off",
+        siteKey: typeof data.siteKey === "string" ? data.siteKey : "",
+      };
+    } catch {
+      return { mode: "off", siteKey: "" };
+    }
+  });
+  const needTurnstile = () => Boolean(turnstileCfg()?.mode !== "off" && turnstileCfg()?.siteKey);
 
   const [capabilities] = createResource(async () => {
     try {
@@ -54,15 +75,17 @@ export function SetupView(props: {
     setLoading(true);
     setError("");
     try {
+      const encryptedAuth = await encryptAuthPayload({ password: password() });
       const res = await fetch("/api/setup/init", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           username: username().trim(),
-          password: password(),
+          encryptedAuth,
           domain: selectedDomain().trim(),
           mailboxLocal: mailboxLocal().trim(),
           sendProvider: sendProvider(),
+          turnstileToken: turnstileToken() || undefined,
         }),
       });
       if (!res.ok) {
@@ -77,6 +100,7 @@ export function SetupView(props: {
       props.onInitialized(data.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "初始化失败");
+      setTurnstileResetNonce((n) => n + 1);
     } finally {
       setLoading(false);
     }
@@ -313,8 +337,17 @@ export function SetupView(props: {
               </div>
             </div>
 
+          <Show when={needTurnstile()}>
+            <TurnstileWidget
+              siteKey={turnstileCfg()?.siteKey || ""}
+              theme={theme.resolvedTheme()}
+              resetNonce={turnstileResetNonce()}
+              onToken={setTurnstileToken}
+            />
+          </Show>
+
           <button
-            disabled={loading()}
+            disabled={loading() || (needTurnstile() && !turnstileToken())}
             class="w-full rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-60"
             onClick={init}
           >

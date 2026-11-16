@@ -24,8 +24,9 @@ export async function handleUserRoutes(request: Request, env: Env, url: URL, pat
     const auth = authRes;
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
-    const oldPassword = S.getStringField(body, "oldPassword") || "";
-    const newPassword = S.getStringField(body, "newPassword") || "";
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
+    const { oldPassword, newPassword } = pwRes;
     if (!oldPassword) return json({ error: "invalid_old_password" }, { status: 400 });
     if (newPassword.length < 8 || newPassword.length > 72) return json({ error: "invalid_new_password" }, { status: 400 });
 

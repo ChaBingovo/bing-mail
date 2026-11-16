@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json } from "../http";
-import { getBearerToken, passwordVersionMatches, verifyJwt, type JwtPayload } from "../auth";
+import { decryptAuthPayload, getBearerToken, passwordVersionMatches, verifyJwt, type JwtPayload } from "../auth";
 import { normalizeSendProvider, type SendProvider } from "../outbound";
 
 export function isUniqueViolation(err: unknown) {
@@ -99,6 +99,31 @@ export function toUsername(body: unknown) {
 export function toPassword(body: unknown) {
   const password = getStringField(body, "password") || "";
   return password;
+}
+
+/** Resolves password fields from an `encryptedAuth` envelope or plain fallback fields. */
+export async function resolvePasswordPayload(
+  body: unknown,
+  env: Env,
+): Promise<{ password: string; oldPassword: string; newPassword: string } | Response> {
+  const rec = asRecord(body);
+  const enc = rec ? rec["encryptedAuth"] : undefined;
+  if (enc !== undefined && enc !== null) {
+    const secret = getJwtSecret(env);
+    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+    const decrypted = await decryptAuthPayload(enc, secret);
+    if (!decrypted) return json({ error: "invalid_encrypted_payload" }, { status: 400 });
+    return {
+      password: decrypted.password ?? "",
+      oldPassword: decrypted.oldPassword ?? "",
+      newPassword: decrypted.newPassword ?? "",
+    };
+  }
+  return {
+    password: getStringField(body, "password") || "",
+    oldPassword: getStringField(body, "oldPassword") || "",
+    newPassword: getStringField(body, "newPassword") || "",
+  };
 }
 
 export function isValidUsername(username: string) {

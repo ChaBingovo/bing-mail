@@ -1,14 +1,22 @@
 import { createSignal, Show } from "solid-js";
+import { useTheme } from "../context/ThemeContext";
+import { TurnstileWidget } from "./TurnstileWidget";
 
 export function LoginCard(props: {
-  onLogin: (username: string, password: string) => void;
+  onLogin: (username: string, password: string, turnstileToken?: string) => void;
   showRegister: boolean;
   onGoRegister: () => void;
   loading: boolean;
   error: string;
+  turnstileRequired?: boolean;
+  turnstileSiteKey?: string;
+  turnstileResetNonce?: number;
 }) {
+  const theme = useTheme();
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
+  const [turnstileToken, setTurnstileToken] = createSignal("");
+  const needTurnstile = () => Boolean(props.turnstileRequired && props.turnstileSiteKey);
 
   return (
     <div class="mx-auto w-full max-w-md rounded-xl border border-white/10 bg-zinc-950/60 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
@@ -36,6 +44,15 @@ export function LoginCard(props: {
           />
         </div>
 
+        <Show when={needTurnstile()}>
+          <TurnstileWidget
+            siteKey={props.turnstileSiteKey || ""}
+            theme={theme.resolvedTheme()}
+            resetNonce={props.turnstileResetNonce}
+            onToken={setTurnstileToken}
+          />
+        </Show>
+
         <Show when={props.error}>
           <div class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
             {props.error}
@@ -43,9 +60,9 @@ export function LoginCard(props: {
         </Show>
 
         <button
-          disabled={props.loading}
+          disabled={props.loading || (needTurnstile() && !turnstileToken())}
           class="w-full rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-60"
-          onClick={() => props.onLogin(username().trim(), password())}
+          onClick={() => props.onLogin(username().trim(), password(), turnstileToken() || undefined)}
         >
           登录
         </button>

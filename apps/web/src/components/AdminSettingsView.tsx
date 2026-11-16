@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import type { ApiClient } from "../services/api";
 import { DropdownSelect } from "./DropdownSelect";
+import { encryptAuthPayload } from "../utils/payloadCrypto";
 
 type AdminUserRow = {
   id: string;
@@ -236,12 +237,13 @@ export function AdminSettingsView(props: { api: ApiClient; onDomainsChanged?: ()
   const createUser = async () => {
     setError("");
     try {
+      const encryptedAuth = await encryptAuthPayload({ password: createPassword() });
       await props.api.apiJson("/api/admin/users", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           username: createUsername().trim(),
-          password: createPassword(),
+          encryptedAuth,
           mailboxLocal: createMailboxLocal().trim(),
           domain: createMailboxDomain(),
           isAdmin: createIsAdmin(),
@@ -262,10 +264,11 @@ export function AdminSettingsView(props: { api: ApiClient; onDomainsChanged?: ()
     setError("");
     try {
       const userId = resetUserId().trim();
+      const encryptedAuth = await encryptAuthPayload({ password: resetPassword() });
       await props.api.apiText(`/api/admin/users/${encodeURIComponent(userId)}/password`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: resetPassword() }),
+        body: JSON.stringify({ encryptedAuth }),
       });
       setResetPassword("");
     } catch (err) {

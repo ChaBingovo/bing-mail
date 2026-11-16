@@ -2,6 +2,7 @@ import { For, Show, createMemo, createResource, createSignal } from "solid-js";
 import type { ApiClient } from "../services/api";
 import type { AuthUser } from "../types";
 import { DropdownSelect } from "./DropdownSelect";
+import { encryptAuthPayload } from "../utils/payloadCrypto";
 
 export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
   const [oldPassword, setOldPassword] = createSignal("");
@@ -78,10 +79,14 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
     setError("");
     setOk(false);
     try {
+      const encryptedAuth = await encryptAuthPayload({
+        oldPassword: oldPassword(),
+        newPassword: newPassword(),
+      });
       await props.api.apiText("/api/user/password", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ oldPassword: oldPassword(), newPassword: newPassword() }),
+        body: JSON.stringify({ encryptedAuth }),
       });
       setOldPassword("");
       setNewPassword("");

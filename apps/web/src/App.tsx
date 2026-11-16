@@ -21,12 +21,15 @@ import { useInboxNotifications } from "./hooks/useInboxNotifications";
 import { createMailSyncController } from "./services/mailSyncController";
 import { createSpotlightActionBuilder } from "./services/spotlightActions";
 import { buildForwardPrefill, buildReplyPrefill, parseRecipientsInput, type ComposePrefill } from "./utils/compose";
+import { encryptAuthPayload } from "./utils/payloadCrypto";
 
 function GuestView() {
   const app = useApp();
   const [tab, setTab] = createSignal<"login" | "register">("login");
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [turnstileResetNonce, setTurnstileResetNonce] = createSignal(0);
+  const [loginFailureTriggered, setLoginFailureTriggered] = createSignal(false);
 
   type SetupStatus = {
     ok: boolean;
@@ -91,34 +94,73 @@ function GuestView() {
     }
   });
 
-  const login = async (username: string, password: string) => {
+  const [turnstile] = createResource(async () => {
+    try {
+      const res = await fetch("/api/turnstile/config");
+      if (!res.ok) return { mode: "off", siteKey: "" };
+      const data = (await res.json()) as { mode?: string; siteKey?: string };
+      return {
+        mode: typeof data.mode === "string" ? data.mode : "off",
+        siteKey: typeof data.siteKey === "string" ? data.siteKey : "",
+      };
+    } catch {
+      return { mode: "off", siteKey: "" };
+    }
+  });
+
+  const loginTurnstileRequired = () => {
+    const cfg = turnstile();
+    if (!cfg?.siteKey || cfg.mode === "off") return false;
+    return cfg.mode === "always" || (cfg.mode === "on_failure" && loginFailureTriggered());
+  };
+
+  const registerTurnstileRequired = () => {
+    const cfg = turnstile();
+    return Boolean(cfg?.siteKey && cfg.mode !== "off");
+  };
+
+  const login = async (username: string, password: string, turnstileToken?: string) => {
     setLoading(true);
     setError("");
     try {
+      const encryptedAuth = await encryptAuthPayload({ password });
       const data = await app.api.apiJson<{ user: AuthUser }>("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, encryptedAuth, turnstileToken }),
       });
       app.login(data.user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      const msg = err instanceof Error ? err.message : "登录失败";
+      if (msg === "turnstile_required" || msg === "turnstile_failed" || turnstile()?.mode === "on_failure") {
+        setLoginFailureTriggered(true);
+      }
+      setTurnstileResetNonce((n) => n + 1);
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const register = async (username: string, password: string, mailboxLocal: string, domain: string) => {
+  const register = async (
+    username: string,
+    password: string,
+    mailboxLocal: string,
+    domain: string,
+    turnstileToken?: string,
+  ) => {
     setLoading(true);
     setError("");
     try {
+      const encryptedAuth = await encryptAuthPayload({ password });
       const data = await app.api.apiJson<{ user: AuthUser }>("/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password, mailboxLocal, domain }),
+        body: JSON.stringify({ username, encryptedAuth, mailboxLocal, domain, turnstileToken }),
       });
       app.login(data.user);
     } catch (err) {
+      setTurnstileResetNonce((n) => n + 1);
       setError(err instanceof Error ? err.message : "注册失败");
     } finally {
       setLoading(false);
@@ -189,6 +231,9 @@ function GuestView() {
                       onGoLogin={() => setTab("login")}
                       loading={loading()}
                       error={error()}
+                      turnstileRequired={registerTurnstileRequired()}
+                      turnstileSiteKey={turnstile()?.siteKey || ""}
+                      turnstileResetNonce={turnstileResetNonce()}
                     />
                   }
                 >
@@ -198,6 +243,9 @@ function GuestView() {
                     onGoRegister={() => setTab("register")}
                     loading={loading()}
                     error={error()}
+                    turnstileRequired={loginTurnstileRequired()}
+                    turnstileSiteKey={turnstile()?.siteKey || ""}
+                    turnstileResetNonce={turnstileResetNonce()}
                   />
                 </Show>
               </div>

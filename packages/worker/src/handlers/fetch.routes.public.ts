@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { json } from "../http";
-import { hashPassword, passwordVersion, signJwt, verifyPassword } from "../auth";
+import { hashPassword, issueAuthKeyPair, passwordVersion, signJwt, verifyPassword } from "../auth";
 import { getSendCapabilities, normalizeSendProvider } from "../outbound";
 import * as S from "./fetch.shared";
 
@@ -27,6 +27,12 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
   if (pathname === "/api/turnstile/config" && request.method === "GET") {
     const cfg = await S.getTurnstileConfig(env);
     return json({ mode: cfg.mode, siteKey: cfg.siteKey }, { headers: { "cache-control": "no-store" } });
+  }
+
+  if (pathname === "/api/auth/key" && request.method === "GET") {
+    const secret = S.getJwtSecret(env);
+    if (!secret) return json({ error: "server_misconfigured" }, { status: 500 });
+    return json(await issueAuthKeyPair(secret), { headers: { "cache-control": "no-store" } });
   }
 
   if (pathname === "/api/setup/capabilities" && request.method === "GET") {
@@ -65,8 +71,10 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       if (turnstileRes) return turnstileRes;
     }
 
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
     const username = S.toUsername(body);
-    const password = S.toPassword(body);
+    const password = pwRes.password;
     if (!S.isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
     if (typeof password !== "string" || password.length < 8 || password.length > 72) {
       return json({ error: "invalid_password" }, { status: 400 });
@@ -169,8 +177,10 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       if (turnstileRes) return turnstileRes;
     }
 
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
     const username = S.toUsername(body);
-    const password = S.toPassword(body);
+    const password = pwRes.password;
     if (!S.isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
     if (typeof password !== "string" || password.length < 8 || password.length > 72) {
       return json({ error: "invalid_password" }, { status: 400 });
@@ -242,8 +252,10 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     const body = await S.readJsonBody(request);
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
 
+    const pwRes = await S.resolvePasswordPayload(body, env);
+    if (pwRes instanceof Response) return pwRes;
     const username = S.toUsername(body);
-    const password = S.toPassword(body);
+    const password = pwRes.password;
     if (!S.isValidUsername(username)) return json({ error: "invalid_username" }, { status: 400 });
     if (typeof password !== "string" || password.length < 1) return json({ error: "invalid_password" }, { status: 400 });
 
