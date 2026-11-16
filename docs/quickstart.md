@@ -2,7 +2,7 @@
 
 面向"忘了怎么跑起来"的场景。下面所有命令都在**仓库根目录**执行，从上往下照做即可。
 
-一句话：只需要 **Bun**。不需要单独装 Node，不需要 Cloudflare 账号，不需要联网部署——本地用 Miniflare 模拟 D1 / R2 / Queue / Durable Object。
+一句话：本地运行只需要 **Bun**，不需要单独安装 Node 或登录 Cloudflare；依赖首次安装仍需要网络。Miniflare 会在本地模拟 D1 / R2 / Queue / Durable Object。
 
 ## 1. 前置条件
 
@@ -51,7 +51,7 @@ bun run dev:worker
 
 1. **自动跑数据库迁移**（全新克隆或刚清库之后也能直接起）。
 2. 在 <http://127.0.0.1:8788> 启动 Worker，**API 和前端在同一个端口**。
-3. 前端静态资源按 `wrangler.toml` 的 `[assets] directory = "apps/web/dist"` 提供。
+3. 前端静态资源按 `wrangler.jsonc` 的 `assets.directory = "apps/web/dist"` 提供。
 
 看到下面这行就绪：
 
@@ -116,7 +116,7 @@ bun --cwd apps/web test
 bun --cwd packages/worker db:reset:local
 ```
 
-它会：删掉所有表 → 清掉本地 R2 / Durable Object / 缓存 → 重新跑一遍迁移。跑完是仅剩表结构的干净库，页面会重新进入初始化向导。
+它会：删掉所有表 → 清掉本地 R2 / Durable Object / 缓存 → 重新跑一遍迁移。跑完是仅剩表结构的干净库，页面会重新进入初始化向导；如需演示账号，再单独执行 `db:seed:dev`。
 
 ### 演示账号（可选）
 
@@ -230,6 +230,6 @@ bun --cwd packages/worker db:reset:local   # 清空本地数据
 bun --cwd packages/worker db:seed:dev      # 演示账号 default / default1234
 ```
 
-相关文档：[summary.md](./summary.md)（项目现状与待办）、[dev.md](./dev.md)（环境细节）、[deploy-checklist.md](./deploy-checklist.md)（部署）、[email-rendering-checklist.md](./email-rendering-checklist.md)（邮件渲染验收）。
+相关文档：[architecture.md](./architecture.md)（流水线与边界）、[summary.md](./summary.md)（项目现状与待办）、[dev.md](./dev.md)（环境细节）、[deploy-checklist.md](./deploy-checklist.md)（部署）、[email-rendering-checklist.md](./email-rendering-checklist.md)（邮件渲染验收）。
 
 

@@ -8,6 +8,8 @@
     "typescript": "^5.8.3"
   },
   "scripts": {
+    "build": "bun install --cwd packages/worker --backend=copyfile && bun install --cwd apps/web --backend=copyfile && bun run build:web",
+    "deploy": "bun run db:migrations:apply && bun run deploy:worker",
     "dev:worker": "bun --cwd packages/worker dev",
     "deploy:worker": "bun --cwd packages/worker deploy",
     "dev:web": "bun --cwd apps/web dev",
@@ -16,6 +18,7 @@
     "check": "bun run typecheck && bun run test && bun run build:web",
     "typecheck": "bun --cwd packages/worker typecheck && bun --cwd apps/web typecheck",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun --cwd packages/worker db:migrate"
+    "db:migrate": "bun --cwd packages/worker db:migrate",
+    "db:migrations:apply": "bun --cwd packages/worker db:migrations:apply"
   }
 }

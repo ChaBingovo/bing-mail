@@ -1,175 +1,65 @@
-# 项目现状总结
+# 项目现状
 
-最后更新：2026-10-01（beta 分支）
+最后核对：2026-11-14。本文描述当前代码与已验证能力；架构决策见 [architecture.md](./architecture.md)，本地启动见 [quickstart.md](./quickstart.md)。
 
-本文记录 Bingmail 当前的功能状态、本轮完成的工作、待办事项与已知限制。启动与测试流程见 [quickstart.md](./quickstart.md)，部署见 [deploy-checklist.md](./deploy-checklist.md)。
+## 项目定位
 
-## 一、项目是什么
+Bingmail 是部署在 Cloudflare 上的个人网页邮箱：使用自有域名收信，在浏览器中阅读、搜索和管理邮件，并支持别名、附件、实时通知与验证码提取。
 
-部署在 Cloudflare 上的个人网页邮箱：用自有域名收信，在浏览器里查看邮件、管理别名、搜索历史邮件，并用实时通知与 AI 提取验证码。
+它采用“原始邮件先保存、解析异步化、阅读数据预计算”的混合流水线。目标是关键步骤失败时同步拒收，防止 SMTP 已接受后静默失败；不承诺“绝不丢信”。
 
-技术栈：Cloudflare Workers + D1 + R2 + Queues + Durable Objects + Workers AI，前端 SolidJS + Tailwind。单仓多包：`apps/web`、`packages/worker`、`packages/db`。
+技术栈：Cloudflare Workers、D1、R2、Queues、Durable Objects、Workers AI；前端为 SolidJS + Tailwind。
 
-**邮件流（当前重心）**：
-
-```
-Email Routing → Worker email() → 校验收件人/黑名单 → R2 存原始邮件
-                                          → Queue 入队（先入队后落库）
-Queue 消费 → 抢锁 → 读 R2 → MIME 解析 → AI 提码 → 落库 SUCCESS
-                                          → 更新 FTS5 → 通知 Durable Object → WebSocket 推送
-```
-
-## 二、当前能力
+## 当前能力
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 收信（主邮箱 + 别名） | 可用 | 未知收件人、黑名单与超 25 MiB 会 `setReject`；关键持久化在同步路径完成，拒绝能早于 SMTP 应答 |
-| 邮件正文渲染 | 可用 | HTML 走 Shadow DOM + DOMPurify + CSP sandbox；纯文本/Markdown 有降级 |
-| 外部图片 | 可用 | 走 `/api/media/proxy`，带出站白名单、逐跳校验、重定向上限、体积上限、魔数嗅探 |
-| 内联图片（cid） | 可用 | `src="cid:..."` 重写为同源附件端点，不经外部网络 |
-| 附件 | 可用 | 解析后存 R2 并可下载；单个 10 MiB / 合计 25 MiB 上限 |
-| AI 提取验证码 | 可用 | 先正则粗筛再调 Workers AI，实测能正确提取验证码与服务名 |
-| 实时通知 | 可用 | WebSocket 推送 + 轮询回退（连续失败降级） |
-| 搜索 | 可用 | FTS5；默认把输入 token 引用化（非法语法 400 而非 500），`mode=advanced` 可透传 OR/NOT/前缀，管理员可用 `address=*` 跨邮箱 |
-| 别名管理 | 可用 | 上限由 `max_aliases` 控制，`0` 表示禁用 |
-| 黑名单发件人 | 可用 | 账户设置页可增删；收信时直接拒收 |
-| 管理后台 | 可用 | 用户/邮箱/域名/注册开关/Turnstile 配置/邮件保留天数 |
-| 游标分页 | 可用 | 首屏 100 条，可"加载更早的邮件" |
-| 删除邮件 | 可用 | `DELETE /api/messages/:id`，先删 R2 再删行，失败留给 cron 兜底 |
-| 已读状态 | 可用 | 服务端 `mailboxes.last_read_at`，跨设备一致 |
-| 失败重试 | 可用 | 详情页对 FAILED 邮件一键重试解析（`POST /api/messages/:id/retry`），并校验 R2 原文仍在 |
-| 保留期清理 | 可用 | 每日 cron 按 `retention_days` 删除超期收件、附件与 R2 对象，`0` 表示永久保留 |
-| 发信 | 可用 | `POST /api/user/send`，发件人限本人主邮箱或启用别名；每日配额（`SEND_DAILY_LIMIT`）；前端有「写邮件」页与已发送列表 |
-| 会话吊销 | 可用 | 改密码 / 管理员重置后旧 JWT 立即失效（`pv` 指纹） |
+| 收信（主邮箱 + 别名） | 可用 | 未知收件人、黑名单和超 25 MiB 邮件会同步拒收；R2、Queue、D1 的关键失败会在 SMTP 应答前触发临时拒收 |
+| 异步解析与恢复 | 可用 | Queue 抢锁、有限重试、TTL 清扫、FAILED 状态与人工重试；当前 Queue 先于 D1 行投递，消费者会处理短暂竞态 |
+| 阅读与附件 | 可用 | HTML 经 DOMPurify + Shadow DOM 渲染；文本/Markdown 降级；附件存 R2，支持下载与 CID 内联图片 |
+| 外部图片 | 可用 | 同源媒体代理，拦截私网目标，限制重定向、大小并校验内容类型/魔数 |
+| 搜索 | 可用 | D1 FTS5 搜索主题与纯文本；支持安全默认模式、高级 FTS 语法和管理员跨邮箱搜索 |
+| 实时提示 | 可用 | Durable Object WebSocket 推送；连续重连失败时轮询回退 |
+| 邮箱管理 | 可用 | 别名配额、黑名单、管理员用户/域名/注册/Turnstile/保留期管理；已读状态服务端同步 |
+| 生命周期 | 可用 | 删除邮件、每日保留期清理、同步删除附件与 FTS；默认保留 90 天，`0` 为永久保留 |
+| 发信 | 基础可用 | 原生 `send_email`、主邮箱或别名发件、纯文本正文、每日额度、失败记录与已发送摘要 |
+| AI | 基础可用 | Workers AI 提取验证码与服务名；AI 不可用或失败不会阻断邮件解析 |
 
-## 三、本轮完成的工作
+## 重要边界
 
-### 3.1 审查问题分级修复（P0→P3）
+- 发信尚不支持附件、CC/BCC、草稿、富文本编辑、已发送正文阅读或回复线程。
+- 收件箱是平铺时间线，尚无归档、文件夹/标签、会话串或规则引擎。
+- AI 尚不做自动分类、账单金额/日期、会议字段提取或自动回复。
+- 没有用户可配置的 Webhook（TG、Bark、钉钉、企业微信等）。
+- 自动化测试覆盖单元、路由和本地模拟；真实 Cloudflare 环境的收信 → Queue → R2/D1 → 通知端到端测试尚未建立。
+- 邮件 HTML 的主防线是 DOMPurify、禁止危险标签/属性、Shadow DOM、链接隔离和图片代理。HTML 下载接口的 CSP 不应被描述为阅读器本身的 CSP 沙箱。
+- 目前仍兼容从 D1 读取 `turnstile_secret`。这与“密钥应只存 Worker Secret”的目标冲突，应优先迁移并移除。
 
-| 级别 | 问题 | 处理 |
-| --- | --- | --- |
-| P0 | seed 默认账号无法登录（哈希 210k 迭代 vs 校验上限 100k），且会让初始化向导撞用户名 | 参数抽成单一事实来源、重算哈希、补主邮箱、新增生成脚本与回归测试 |
-| P0 | 账号创建「先查后插」并发下 500 | 改为原子插入 + 唯一冲突分类 409 + 半成品账号回滚 |
-| P1 | `/api/media/proxy` 是 SSRF 跳板与开放图片代理 | 新增 `url-guard.ts`，逐跳校验、重定向 ≤3、10MiB 硬上限、魔数嗅探 |
-| P1 | 会话迁移只做一半（响应仍回传 token，前端保留死代码） | 只走 HttpOnly Cookie，删除前端 token 与 Bearer 注入 |
-| P2 | `max_aliases = 0` 失效（回退成 3） | `parseSettingInt` 显式处理"未设置"，`0` 生效 |
-| P2 | 入队失败留下永远 PENDING 的僵尸邮件 | 改为先入队后落库，失败则 `setReject` 让发信方重试 |
-| P3 | 搜索输入未净化导致 500 | `toFtsMatch()` 引用化 + 错误转 400 |
-| P3 | 前端未使用已实现的游标分页；FAILED 状态缺失 | 接入分页、统一三态状态 |
+## 验证基线
 
-### 3.2 本地工具链修复
+2026-11-14 在本地执行 `bun run check` 成功：
 
-本地曾完全跑不起来，根因有三条（都已在脚本中绕开并注释）：
+- Worker：131 个测试通过；
+- Web：30 个测试通过；
+- Worker/Web TypeScript 检查与 Vite 生产构建通过。
 
-1. `wrangler` 被解析到 4.94.0，其自带 workerd 在本机 `std::terminate()` 崩溃 → 精确锁定 `4.19.0`。
-2. 经 `npx` / `.bin` shim / 嵌套 `bun run` 调用 wrangler 都会让 workerd 起不来 → 统一为 `cmd /c` + 精确版本 + 相对路径。
-3. 含中文的仓库绝对路径经 `cmd` 会变乱码导致 `ENOENT chdir` → 全部改用相对路径。
+测试数量会变化，以命令实际输出为准。
 
-另修复：`db:seed:dev` 的 `--file` 路径错误；`db:reset:local` 补充清理 R2 / DO / 缓存并按三段式输出。
+## 下一轮建议
 
-### 3.3 解析可靠性
+1. **可靠性**：引入 intake/outbox 状态机、入站幂等键（Message-ID + 原文哈希兜底）和孤儿 R2 对象清理。
+2. **安全与交付**：把 Turnstile secret 从 D1 迁移到 Worker Secret；提交 `bun.lock`、固定 CI Bun 版本并使用冻结安装；补 Origin/CSRF 纵深校验。
+3. **测试与可观测性**：建立独立 Cloudflare 测试环境，监控 Queue 积压、FAILED 比例、R2/D1 错误和 CPU 限额。
+4. **产品闭环**：先补发信附件、CC/BCC、草稿与 HTML；随后完成归档/标签/会话串和 Webhook。
+5. **智能化**：在用户可选择、可关闭且有成本上限的前提下增加分类、账单和会议提取。
 
-- **僵尸 PENDING 自愈**：队列消费者每批次机会性清扫，把「持锁超过 TTL」与「attempt 耗尽且行已过期」的行置为 FAILED，不再永久显示"解析中"。
-- **attempt 耗尽自动重投**：把每次重投视为新周期（重置 attempt、复用同一行与 `r2_raw_key`、重新入队并 ack 当前投递）；持锁的行仍静默跳过，避免重复解析；硬上限 30 次后永久 FAILED，防毒邮件循环；入队失败会回滚计数交给清扫兜底。
-
-### 3.4 测试与文档
-
-- 测试从 6 + 8 大幅扩充（数量以 `bun run check` 实际输出为准），新增覆盖：seed 哈希可验证、账号创建 409 分类、媒体代理出站白名单与路由层（鉴权 / 参数 / 重定向 / 体积 / 内容类型）、Cookie 会话契约、别名配额为 0、入队顺序、认领未命中语义、重投与硬上限、僵尸清扫、FTS 查询净化、本地状态清理、游标分页合并、发信校验、失败重试、保留期清理、搜索高级语法与跨邮箱权限、邮件 HTML 提取降级。
-- 新增文档：[quickstart.md](./quickstart.md)（启动与测试指南）。
-- 修正文档：`deploy-checklist.md` 里失效的本机绝对路径、README 补充自检命令、`.gitattributes` 收敛行尾噪音。
-
-### 3.5 验证方式
-
-每项改动都跑过 `bun run check`（typecheck + 全部测试 + 前端构建），并对关键路径做了端到端实测：
-
-- 收信全链路：注入测试邮件 → 11 个环节日志齐全 → AI 提取 `486213`(GitHub) / `730418`(Notion) → API 可见。
-- 僵尸自愈：人工造超龄 PENDING 行 → 启动 worker 投递新邮件 → 该行自动置 FAILED，且新邮件正常解析。
-- 清库：造假的 R2 附件 → `db:reset:local` → 附件被清、8 个迁移重新应用、库里只剩表结构。
-- 部署配置：`wrangler deploy --dry-run` 通过（Worker 200 KiB / gzip 43.5 KiB）。
-
-### 3.6 上一轮继续（CI 与媒体代理）
-
-- **CI 补全**：`.github/workflows/deploy-worker.yml` 从只跑 worker 类型检查改为 `bun run check`，部署前强制通过 worker+web 类型检查、全部测试与前端构建。
-- **媒体代理路由层测试**：新增 `tests/media-proxy.test.ts` 13 个用例（鉴权、空 URL、私网拦截、逐跳重定向与上限、体积上限、内容类型判定、上游失败）。
-- **内容类型判定修复**：原先用 URL 扩展名兜底，HTML 放在 `*.png` 地址下会被误放行为 `image/png`；改为上游显式声明非 `image/*` 且无魔数字节时直接 415。
-
-### 3.7 本轮继续（发信 / 可靠性 / 搜索）
-
-- **发信落地**：新增迁移 `0009_sent_messages.sql` 与 `POST /api/user/send`（发件人限本人主邮箱或已启用别名、收件人格式与数量、正文大小校验；未配置绑定返回 503；上游失败落一条 FAILED 记录并返回 502），以及 `GET /api/user/sent`；前端新增「写邮件」页与侧栏入口。
-- **失败重试入口**：`POST /api/messages/:id/retry`，仅 FAILED 行可重置为 PENDING 并重新入队；SUCCESS 拒绝重复解析、PENDING 视为已在队列中；入队失败回滚为 FAILED，前端在失败详情显示「重试解析」。
-- **R2 生命周期**：新增每日 cron 清理，删除超过保留期的收件行、其 R2 原始邮件/超限 HTML、FTS 索引以及超期发送记录；保留天数由 `retention_days`（管理员可改）控制，未设置时回退 `MAIL_RETENTION_DAYS`（默认 90），0 表示永久保留。
-- **搜索能力**：`/api/search` 支持 `mode=advanced`（透传 FTS5 运算符 OR/NOT/前缀）与 `address=*`（仅管理员跨邮箱，普通用户 403）；Spotlight 从纯本地过滤改为带防抖的服务端 FTS 搜索，并提供「高级语法」「全部邮箱」两个开关。
-- **打磨**：文档不再写死测试数量；把 `ShadowHtml` 的图片代理改写与 HTML 提取/降级逻辑抽到 `apps/web/src/utils/emailHtml.ts` 并补自动测试。
-
-### 3.8 本轮继续（收信时序 / 附件 / 会话 / 工程）
-
-- **P0 收信时序**：R2 上传、入队、落库从 `ctx.waitUntil()` 移到 `handleEmail` 的同步路径，失败即同步 `setReject`。依据来自官方文档：`waitUntil` 的工作在响应返回**之后**才执行，而 `setReject` 写出的正是 SMTP 应答——放在 `waitUntil` 里等于放弃拒答（官方 11 个示例也都在 awaited 路径上调用它）。同时补了 25 MiB 入站大小守卫。
-- **删除邮件**：`DELETE /api/messages/:id`，先删 R2（原文 / 超限 HTML / 附件）再删 FTS、附件与消息行；R2 失败保留行交给 cron。前端详情页可删除并从本地分页缓存移除。
-- **服务端已读**：迁移 0010 增加 `mailboxes.last_read_at` 与 `POST /api/user/read`；两个 red-dot 端点改由服务端计算，`since` 不再取自前端；localStorage 标记只作一次性迁移来源。
-- **附件**：迁移 0010 新增 `message_attachments`；解析后写入 R2（单个 10 MiB / 合计 25 MiB），提供列表与下载端点，`inline=1` 仅对 `image/*` 生效；前端显示附件列表并下载。
-- **cid 内联图片**：`src="cid:..."` 重写为同源附件端点，兼容大小写 / 尖括号 / 单双引号，未命中保留原样。
-- **会话吊销**：JWT 增加 `pv`（口令哈希截断指纹），改密码或管理员重置后旧 token 立即失效；无 `pv` 的旧 token 放行一次以免部署即全员登出。
-- **发信配额**：复用 `AUTH_RATE` DO（`send:<userId>`，24h 窗口），超限 429，仅成功投递计数，DO 故障时放行。
-- **黑名单入口**：`GET/POST/DELETE /api/user/blocked-senders` + 账户设置页，此前该表只有判定逻辑没有写入入口。
-- **重试校验**：`/retry` 增加 `MAIL_BUCKET.head()`，R2 原文已被清理时返回 409 而不是再失败一次。
-- **工程**：新增 PR 触发的 `check.yml`；删除 `deploy-worker.yml` 里会跳过首次运行的 `run_number != 1`；两处重复的分页查询收敛为 `listMessagesPage()`；保留期清理同步删除附件；`.gitignore` 去重。
-
-## 四、待实现（按优先级）
-
-### P1 — 建议优先
-
-- ~~CI 只做类型检查~~ → **已完成**（§3.6）；PR 校验见 §3.8。
-- ~~媒体代理没有测试覆盖~~ → **已完成**（§3.6）。
-- ~~发信未实现~~ → **已完成**（§3.7/§3.8）。仍缺：附件、抄送/密送、草稿与 HTML 正文撰写；本地未配置 `send_email` 时返回 503。
-
-### P2 — 值得做
-
-- ~~无失败重试入口~~ → **已完成**（§3.7）。
-- ~~R2 没有生命周期管理~~ → **已完成**（§3.7）。
-- ~~搜索语法能力有限~~ → **已完成**（§3.7，`mode=advanced`）。
-- ~~搜索只在当前邮箱内~~ → **已完成**（§3.7，管理员 `address=*`）。
-- ~~无删除/归档、已读只在浏览器、附件被丢弃、黑名单无入口~~ → **已完成**（§3.8）。
-
-### P3 — 打磨
-
-- ~~DOM 渲染层无自动测试~~ → **部分完成**：`utils/emailHtml.ts` 的图片代理改写、cid 重写、`<style>` 提取与解析失败降级已有自动测试；组件级 DOM 行为（Shadow DOM 挂载、DOMPurify 实际净化结果）仍靠人工清单 [email-rendering-checklist.md](./email-rendering-checklist.md)，要自动化需要引入 DOM 环境（如 happy-dom），本轮未新增依赖。
-- ~~测试用例数散落在文档里~~ → **已完成**：文档不再写死数量，以命令输出为准。
-
-### 下一轮候选
-
-- 发信补附件、抄送/密送、草稿与 HTML 正文撰写
-- 邮件归档 / 文件夹 / 会话串（目前是平铺时间线）
-- 引入 DOM 环境，把 `ShadowHtml` 组件级降级路径自动化
-- 媒体代理响应缓存（滚动看图会重复回源）
-- 端到端测试（当前 150+ 用例全是 mock 单测，收信→解析→落库链路只靠人工注入 .eml 验证）
-
-## 五、已知限制与陷阱
-
-| 项 | 说明 |
-| --- | --- |
-| wrangler 版本被锁死 | 本机 workerd 只接受 4.19.0；升级前必须在本地重新验证 `dev` 与 `d1 execute` |
-| 调用方式受限 | 必须 `cmd /c` + 精确版本 + 相对路径，见 `packages/worker/scripts/wrangler-env.ts` 顶部注释 |
-| 本地状态位置 | 数据库在 `.wrangler/state`（仓库根），日志/配置在 `packages/worker/.wrangler-xdg/` |
-| 本地注入测试邮件 | `.eml` 必须带 `Message-ID` 头，否则 400；用 `curl.exe` 才能看到服务端真实报错 |
-| D1 无多语句事务 | 账号创建用「原子插入 + 失败回滚」补偿，而不是事务 |
-| Lazy schema 是禁止的 | 数据库改动必须走 `packages/db/migrations/`，不允许在业务代码里做字段兼容（见 AGENTS.md） |
-| 仓库路径含中文 | 不要把它传给 `cmd`；脚本一律用相对路径 |
-| 本地发信 | 本地 dev 不真正投递邮件，未配置绑定时 `POST /api/user/send` 返回 503 `mail_not_configured`；发信依赖部署后的 `send_email` |
-| 旧会话过渡 | 部署 §3.8 之前签发的 JWT 没有 `pv` 指纹，仍会放行一次；用户重新登录后即带上指纹，之后改密码可正常吊销 |
-| 收信延迟 | 关键持久化已改为同步，每封邮件会增加 R2/Queue/D1 的往返延迟（换取「不静默丢信」） |
-| 定时清理依赖 cron | `scheduled` 只在部署后由 Cloudflare 触发，本地 `wrangler dev` 不会自动跑；清理逻辑可被直接调用（测试即如此） |
-
-## 六、快速核对
+## 常用命令
 
 ```powershell
-bun run check                                       # typecheck + 测试 + 构建（数量以实际输出为准）
-bun run dev:worker                                  # 启动 → http://127.0.0.1:8788
-bun --cwd packages/worker db:reset:local            # 清空本地数据
-bunx wrangler@4.19.0 --cwd . deploy --dry-run       # 校验部署配置
+bun run check
+bun run dev:worker
+bun --cwd packages/worker db:reset:local
+bun --cwd packages/worker db:migrate:remote
 ```
 
-工作区当前状态：`beta` 分支、工作区干净；本轮提交见 `git log --oneline`（是否推送以 `git status` 为准）。本地数据库在最近一次 `db:reset:local` 后为空，首次打开会进入初始化向导。
-
-> 第四节的待办同时维护在仓库根目录的 `TODO.md`（该文件被 `.gitignore` 排除，属于本地文件）：原有分级清单保留为历史记录，其下新增了「下一轮（2026-10 审查新增）」章节。
-
-
+生产迁移必须使用 `db:migrate:remote`；根目录 `db:migrate` 仅迁移本地 Miniflare D1。

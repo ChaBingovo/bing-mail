@@ -92,9 +92,10 @@ bunx wrangler d1 execute bingmail --local --yes --command "UPDATE users SET is_a
 
 ```bash
 bun --cwd packages/worker db:reset:local
-bun run db:migrate
 bun --cwd packages/worker db:seed:dev
 ```
+
+`db:reset:local` 已在清库后重新执行本地迁移，因此无需再单独运行 `bun run db:migrate`。
 
 ## 提交前自检
 

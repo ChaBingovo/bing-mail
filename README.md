@@ -2,7 +2,13 @@
 
 Bingmail 是一个部署在 Cloudflare 上的个人网页邮箱：用自己的域名收信，在浏览器里查看邮件、管理别名、搜索历史邮件，并用实时通知和 AI 验证码提取提升日常使用效率。
 
-当前重点是“可靠收信 + 网页收件箱”。发信能力尚未作为主流程接入，请先把它当作主力收件箱、验证码邮箱和别名管理工具使用。
+当前重点是“可靠收信 + 网页收件箱”。基础纯文本发信、已发送记录与每日额度已经可用；附件、抄送/密送、草稿、富文本编辑和会话回复仍未完成。请将它视为个人主力收件箱、验证码邮箱和别名管理工具，而不是功能齐全的企业邮件套件。
+
+## 架构原则
+
+Bingmail 使用混合式流水线：入站 Worker 只校验收件人/黑名单/大小、保存原始 MIME 并投递解析任务；Queue Consumer 再完成 MIME 解析、附件保存、全文索引、AI 验证码提取和通知。关键写入在 SMTP 应答前完成：失败会拒收，让发送方按 SMTP 语义重试，避免“已接受但后台静默失败”。
+
+这不是“绝不丢信”的承诺：发送方是否重试、平台故障和用户配置仍会影响最终投递。完整流程、已实现能力和边界见 [docs/architecture.md](./docs/architecture.md) 与 [docs/summary.md](./docs/summary.md)。
 
 ## 日常使用
 
@@ -107,7 +113,6 @@ bun run dev:web
 
 ```bash
 bun --cwd packages/worker db:reset:local
-bun run db:migrate
 bun --cwd packages/worker db:seed:dev
 ```
 
@@ -134,7 +139,7 @@ bunx wrangler login
 
 ### 创建资源
 
-资源名称需要与 [wrangler.toml](./wrangler.toml) 保持一致：
+资源名称需要与 [wrangler.jsonc](./wrangler.jsonc) 保持一致：
 
 ```bash
 bunx wrangler d1 create bingmail
@@ -142,13 +147,16 @@ bunx wrangler r2 bucket create bing-mail
 bunx wrangler queues create bingmail-parse
 ```
 
-把 `bunx wrangler d1 create bingmail` 输出的 `database_id` 写入 [wrangler.toml](./wrangler.toml)：
+把 `bunx wrangler d1 create bingmail` 输出的 `database_id` 写入 [wrangler.jsonc](./wrangler.jsonc)：
 
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "bingmail"
-database_id = "REPLACE_ME"
+```jsonc
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bingmail",
+      "database_id": "REPLACE_ME"
+    }
+  ]
 ```
 
 ### 配置 Secrets
@@ -163,7 +171,8 @@ bunx wrangler secret put TURNSTILE_SECRET
 ### 迁移和部署
 
 ```bash
-bun run db:migrate
+# 本地迁移用于本地开发；生产 D1 必须显式加 --remote。
+bun --cwd packages/worker db:migrate:remote
 bun run check
 bun run deploy:worker
 ```
@@ -175,17 +184,15 @@ bun run deploy:worker
 - Email Routing 能把测试邮件投递到 Worker。
 - 收件箱能看到测试邮件，通知和搜索可用。
 
-## GitHub Actions 自动部署
+## 一键部署到 Cloudflare（wrangler.jsonc）
 
-仓库包含工作流：[.github/workflows/deploy-worker.yml](./.github/workflows/deploy-worker.yml)。
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ChaBingovo/bing-mail)
 
-1. 在 Cloudflare 创建 API Token（用于 Wrangler 部署（需要包含 Workers / D1 / R2 / Queues 权限[模板要添加 D1和Queues]）），并复制 Account ID。
-2. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 添加：
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - `JWT_SECRET`
-3. 进入 GitHub Actions 手动运行 `Deploy Worker`（或推送到 `main` / `beta` 分支触发）。
-4. 部署完成后，按 [docs/deploy-checklist.md](./docs/deploy-checklist.md) 完成资源与 Email Routing 配置，然后访问 Worker 域名或自定义域名，按页面引导完成初始化。
+点击上方按钮后，Cloudflare 会基于 [wrangler.jsonc](./wrangler.jsonc) 自动创建所需的 D1、R2、Queue、Durable Objects 和 Workers AI 绑定，并引导填写 `.dev.vars.example` 中的 Secret（`JWT_SECRET`）：
+
+1. 在部署向导中授权 GitHub 并设置 `JWT_SECRET`（其余资源会自动创建并回填配置）。
+2. 构建与部署命令会由根目录 [package.json](./package.json) 自动识别（`bun run build` / `bun run deploy`，包含远程 D1 迁移 `wrangler d1 migrations apply DB --remote`）。
+3. 部署完成后，按 [docs/deploy-checklist.md](./docs/deploy-checklist.md) 配置 Email Routing 与域名，然后访问 Worker 域名或自定义域名完成初始化。
 
 ## 配置速查
 
@@ -208,4 +215,5 @@ D1 应用设置表 `app_settings`：
 - `max_aliases`：每个邮箱最多别名数。
 - `turnstile_mode`
 - `turnstile_site_key`
-- `turnstile_secret`
+
+`TURNSTILE_SECRET` 仅应来自 Cloudflare Worker Secret 或本地 `.dev.vars`；不要把它写进 `app_settings`。
