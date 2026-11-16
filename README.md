@@ -122,98 +122,123 @@ bun --cwd packages/worker db:seed:dev
 bun run check   # typecheck（worker + web）+ 测试 + 前端构建
 ```
 
-## 部署到 Cloudflare
+## 部署到 Cloudflare（基于 wrangler.jsonc）
 
-部署检查清单见 [docs/deploy-checklist.md](./docs/deploy-checklist.md)。
+Bingmail 的所有 Cloudflare 资源绑定与默认环境变量都已声明在根目录 [wrangler.jsonc](./wrangler.jsonc) 中。**首次部署时 Wrangler 会自动创建 D1、R2、Queue、Durable Objects 等资源，不需要提前去控制台手动一个一个创建。**
 
-### 前置条件
+> 完整上线核对清单见 [docs/deploy-checklist.md](./docs/deploy-checklist.md)。
 
-- 一个已接入 Cloudflare 的域名。
-- Cloudflare Email Routing 已启用。
-- 已安装 Bun。
-- Wrangler 已登录。
+---
 
-```bash
-bunx wrangler login
-```
-
-### 创建资源
-
-资源名称需要与 [wrangler.jsonc](./wrangler.jsonc) 保持一致：
-
-```bash
-bunx wrangler d1 create bingmail
-bunx wrangler r2 bucket create bing-mail
-bunx wrangler queues create bingmail-parse
-```
-
-把 `bunx wrangler d1 create bingmail` 输出的 `database_id` 写入 [wrangler.jsonc](./wrangler.jsonc)：
-
-```jsonc
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "bingmail",
-      "database_id": "REPLACE_ME"
-    }
-  ]
-```
-
-### 配置 Secrets
-
-```bash
-bunx wrangler secret put JWT_SECRET
-bunx wrangler secret put TURNSTILE_SECRET
-```
-
-`JWT_SECRET` 必须配置；`TURNSTILE_SECRET` 仅在启用 Turnstile 时需要。
-
-### 迁移和部署
-
-```bash
-# 本地迁移用于本地开发；生产 D1 必须显式加 --remote。
-bun --cwd packages/worker db:migrate:remote
-bun run check
-bun run deploy:worker
-```
-
-部署后建议验证：
-
-- 初始化向导或登录页能正常打开。
-- `/api/setup/status` 返回正常。
-- Email Routing 能把测试邮件投递到 Worker。
-- 收件箱能看到测试邮件，通知和搜索可用。
-
-## 一键部署到 Cloudflare（wrangler.jsonc）
+### 方式一：Deploy to Cloudflare 一键部署（适合他人在自己账号新建副本）
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ChaBingovo/bing-mail)
 
-点击上方按钮后，Cloudflare 会基于 [wrangler.jsonc](./wrangler.jsonc) 自动创建所需的 D1、R2、Queue、Durable Objects 和 Workers AI 绑定，并引导填写 `.dev.vars.example` 中的 Secret（`JWT_SECRET`）：
+1. 点击上方按钮并授权 GitHub（页面会读取仓库根目录的 [wrangler.jsonc](./wrangler.jsonc)、[package.json](./package.json) 和 [.dev.vars.example](./.dev.vars.example)）。
+2. 在环境变量 / Secret 表单中填写 `JWT_SECRET`（任意长随机字符串，用于签发登录会话，**必填**）。
+3. 确认构建与部署命令：
+   - **Build command**：`bun run build`
+   - **Deploy command**：`bun run deploy`（会先自动建库并部署 Worker，再执行 `npx wrangler d1 migrations apply DB --remote` 创建全部数据库表）
+4. 部署完成后继续看下面的 [部署后必做配置](#部署后必做配置)。
 
-1. 在部署向导中授权 GitHub 并设置 `JWT_SECRET`（其余资源会自动创建并回填配置）。
-2. 构建与部署命令会由根目录 [package.json](./package.json) 自动识别（`bun run build` / `bun run deploy`，包含远程 D1 迁移 `wrangler d1 migrations apply DB --remote`）。
-3. 部署完成后，按 [docs/deploy-checklist.md](./docs/deploy-checklist.md) 配置 Email Routing 与域名，然后访问 Worker 域名或自定义域名完成初始化。
+> 如果按钮第一步提示 **“无法获取存储库内容”**：请到 GitHub `Settings -> Applications -> Installed GitHub Apps -> Cloudflare Workers and Pages -> Configure` 确认开启了 **All repositories** 或勾选了当前仓库；或者直接使用下面的**方式二**。
 
-## 配置速查
+---
 
-Cloudflare Secrets：
+### 方式二：Cloudflare 控制台导入仓库（推荐给自己账号部署 / Fork 后部署）
 
-- `JWT_SECRET`：JWT 签名密钥，必须。
-- `TURNSTILE_SECRET`：Turnstile 服务端密钥，可选。
+在 Cloudflare 控制台操作最稳定，以后每次 `git push` 也会自动更新：
 
-`.dev.vars` 本地变量：
+1. 进入 Cloudflare 控制台 → **Workers & Pages** → **创建（Create）** → **导入存储库（Import a repository）**，选择你的 `bing-mail` 仓库。
+2. **项目名称（Project / Worker name）**：建议填 `bingmail`（与 [wrangler.jsonc](./wrangler.jsonc) 一致；若填了 `bing-mail`，Wrangler 会自动兼容覆盖并提示一次名称差异，不影响运行）。
+3. **构建与部署命令（关键！）**：
+   - **构建命令（Build command）**：`bun run build`（默认 `npm run build` 也能跑通）
+   - **部署命令（Deploy command）**：**一定要把默认的 `npx wrangler deploy` 改成 `bun run deploy`**！
+     - 原因：默认的 `npx wrangler deploy` 只会创建空 D1 数据库，**不会创建数据表**；改为 `bun run deploy` 后才会自动执行 `npx wrangler d1 migrations apply DB --remote` 建表。
+4. 点击 **部署（Deploy）**。
+5. 部署成功后，进入该 Worker 的 **Settings（设置）-> Variables and Secrets（变量和机密）**，添加至少一个 **Secret**：
+   - 变量名：`JWT_SECRET`，类型选 **Secret**，值填一个高强度随机字符串（例如 32 位以上随机字符）。
+6. 如刚才忘了改 Deploy command 或后补了 `JWT_SECRET`，点击 **Retry build / 重新部署** 或触发一次构建即可。
 
-- `JWT_SECRET`
-- `TURNSTILE_MODE`：`off | always | on_failure`
-- `TURNSTILE_SITE_KEY`
-- `TURNSTILE_SECRET`
-- `WS_MAX_CONNECTIONS`
+---
 
-D1 应用设置表 `app_settings`：
+### 方式三：本地命令行手动部署
 
-- `allow_register`：是否允许注册，`0/1`。
-- `max_aliases`：每个邮箱最多别名数。
-- `turnstile_mode`
-- `turnstile_site_key`
+适合本地直接推上 Cloudflare：
 
-`TURNSTILE_SECRET` 仅应来自 Cloudflare Worker Secret 或本地 `.dev.vars`；不要把它写进 `app_settings`。
+```bash
+# 1. 登录 Cloudflare
+bunx wrangler login
+
+# 2. 构建前端并自动创建 D1/R2/Queue、部署 Worker、执行远程 D1 迁移
+bun run build
+bun run deploy
+
+# 3. 写入必填 Secret
+bunx wrangler secret put JWT_SECRET
+```
+
+---
+
+### 变量与绑定完整说明（哪些自动，哪些手动）
+
+#### 1. 自动创建并绑定的资源（已在 `wrangler.jsonc` 声明，无需手动创建）
+
+| 绑定名 | 类型 | 资源名 / 说明 | 是否需要手动建 |
+| --- | --- | --- | --- |
+| `DB` | D1 Database | `bingmail`（不填 `database_id` 触发自动创建） | 自动创建（**需 `bun run deploy` 建表**） |
+| `MAIL_BUCKET` | R2 Bucket | `bing-mail`（存储原始 MIME 与大附件） | 自动创建 |
+| `PARSE_QUEUE` | Queue | `bingmail-parse`（入站异步解析队列 + 消费者） | 自动创建 |
+| `MAIL_EVENTS` | Durable Object | `MailEventsDO`（WebSocket 实时新邮件推送） | 自动随代码迁移 |
+| `AUTH_RATE` | Durable Object | `AuthRateLimitDO`（登录限流与每日发信额度） | 自动随代码迁移 |
+| `AI` | Workers AI | 用于邮件验证码提取 | 自动绑定 |
+| `ASSETS` | Static Assets | 托管 `apps/web/dist` 前端静态页面 | 自动上传 |
+| `EMAIL` | Send Email | Cloudflare Email Service 发信绑定（按域名可选） | 自动绑定（发信需域内开通） |
+
+#### 2. 已内置默认值的环境变量（已在 `wrangler.jsonc` 的 `vars` 中配置，通常无需改动）
+
+| 变量名 | 默认值 | 用途 |
+| --- | --- | --- |
+| `HTML_INLINE_LIMIT` | `102400` | HTML 正文小于 100 KiB 存 D1，超过存 R2 |
+| `PARSE_QUEUE_MAX_ATTEMPTS` | `5` | 队列解析最大重试次数 |
+| `WS_MAX_CONNECTIONS` | `3` | 单账号允许的同时 WebSocket 连接数 |
+| `LOGIN_FAIL_LIMIT` | `5` | 登录失败锁定阈值 |
+| `LOGIN_FAIL_WINDOW_MS` | `600000` | 登录限流统计窗口（10 分钟） |
+| `SEND_DAILY_LIMIT` | `200` | 单账号每日外发邮件上限 |
+| `MAIL_RETENTION_DAYS` | `90` | 邮件保留天数（`0` 关闭清理；可在管理后台覆盖） |
+
+#### 3. 需要手动配置的 Secrets（敏感密钥，不可写入 `wrangler.jsonc`）
+
+在 Cloudflare 控制台 **Worker -> Settings -> Variables and Secrets**（选 Secret 类型）或通过 `wrangler secret put` 设置：
+
+| Secret 名称 | 是否必填 | 说明 |
+| --- | --- | --- |
+| `JWT_SECRET` | **必填** | 登录 Cookie JWT 签名密钥；未设置时无法完成初始化与登录 |
+| `RESEND_API_KEY` | 选填 | 仅当你在管理后台把某个域名发信商设为 **Resend** 时需要 |
+| `TURNSTILE_SECRET` | 选填 | 仅当在管理后台启用 Turnstile 人机验证时需要（Site Key 在后台界面里填） |
+
+---
+
+### 部署后必做配置
+
+1. **打开初始化向导**：
+   - 访问你的 Worker 域名（`*.workers.dev`）或绑定的自定义域名。
+   - 首次访问会自动进入 4 步初始化向导：创建管理员账号 → 添加收信域名 →（可选）选择发信服务（Cloudflare Email Service / Resend / 暂不配置，系统内部互发邮件无需配置外发服务）→ 分配管理员主邮箱。
+2. **配置收信（Cloudflare Email Routing）**：
+   - 在 Cloudflare 域名控制台开启 **Email Routing**，确认域名 MX 记录生效。
+   - 添加路由规则（如 Catch-all 或指定前缀）→ 操作选择 **发送到 Worker（Send to a Worker）** → 选择你部署的 Bingmail Worker。
+3. **（可选）绑定自定义域名**：
+   - 在 Worker 的 **Settings -> Domains & Routes** 添加你的域名（例如 `mail.example.com`）。
+
+---
+
+### 常见问题排查
+
+- **刚部署完打开不是初始化向导，或提示“D1 数据库尚未初始化表结构”**：
+  - 这是因为 Workers Builds 的 **Deploy command** 仍为默认的 `npx wrangler deploy`，只创建了空 D1 数据库但没跑建表迁移。
+  - 解决办法：在 Worker 的 **Settings -> Builds** 将 Deploy command 改为 `bun run deploy` 后重新部署（或在本地登录 Wrangler 后执行一次 `npx wrangler d1 migrations apply DB --remote`）。
+- **提示“尚未配置 JWT_SECRET Secret”**：
+  - 请在 Worker 的 **Settings -> Variables and Secrets** 添加类型为 **Secret** 的 `JWT_SECRET` 后重新部署或刷新。
+- **本地开发变量（`.dev.vars`）与后台设置表（`app_settings`）**：
+  - 本地开发在根目录创建 `.dev.vars`（至少包含 `JWT_SECRET=dev-secret`，其余 `TURNSTILE_MODE=off` 等见 [docs/quickstart.md](./docs/quickstart.md)）。
+  - 注册开关 `allow_register`、每号最大别名数 `max_aliases`、保留天数 `retention_days` 等运行期配置存储在 D1 `app_settings` 表中，直接通过网页管理后台修改即可。

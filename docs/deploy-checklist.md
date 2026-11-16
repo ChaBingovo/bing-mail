@@ -2,28 +2,20 @@
 
 ## 1. 部署前
 
-- 已登录 Wrangler，且 API Token 具备 Workers、D1、R2、Queues 与所需 Secret 管理权限（使用 Cloudflare 一键部署可自动创建这些资源）。
-- 已创建或确认 D1、R2 bucket、Queue；名称必须与 `wrangler.jsonc` 一致。
-- 手动部署时，`wrangler.jsonc` 中的 D1 `database_id` 已替换 `REPLACE_ME`（一键部署会自动回填）。
+- 已登录 Wrangler（或使用 Cloudflare 一键部署 / Workers Builds 导入仓库自动创建 D1、R2、Queue）。
+- 若绑定的不是自动新建的已有资源，确认 D1、R2 bucket、Queue 名称与 `wrangler.jsonc` 一致。
 - Email Routing、MX 记录和目标 Worker 路由已在 Cloudflare 控制台配置。
-- `JWT_SECRET` 已通过 `wrangler secret put JWT_SECRET` 或 CI Secret 配置；启用 Turnstile 时同样配置 `TURNSTILE_SECRET`。不要把密钥写进 D1 设置或提交到仓库。
+- `JWT_SECRET` 已通过 Cloudflare Worker Secrets 或 `wrangler secret put JWT_SECRET` 配置；使用 Resend 发信或启用 Turnstile 时同步配置 `RESEND_API_KEY` / `TURNSTILE_SECRET`。不要把密钥写进 D1 设置或提交到仓库。
 
 ## 2. 验证与迁移
 
 ```bash
 bun run check
-
-# 这是生产 D1 的迁移；bun run db:migrate 只操作本地 Miniflare 数据库。
-bun --cwd packages/worker db:migrate:remote
+bun run build
+bun run deploy
 ```
 
-## 3. 部署
-
-```bash
-bun run deploy:worker
-```
-
-使用 `Deploy to Cloudflare` 一键部署时，Cloudflare Workers Builds 会自动执行 `bun run build` 与 `bun run deploy`（含远程 D1 迁移）；手动部署仍必须完成上面的远程迁移。
+使用 `Deploy to Cloudflare` 或 Cloudflare 控制台导入仓库时，将 Build command 设为 `bun run build`，Deploy command 设为 `bun run deploy`（会先执行 `npx wrangler deploy` 自动创建资源并部署 Worker，再执行 `npx wrangler d1 migrations apply DB --remote` 创建数据表）。
 
 ## 4. 部署后验证
 

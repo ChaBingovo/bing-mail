@@ -28,13 +28,49 @@ function GuestView() {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
 
-  const [setup] = createResource(async () => {
+  type SetupStatus = {
+    ok: boolean;
+    initialized: boolean;
+    allowRegister: boolean;
+    schemaReady: boolean;
+    hasJwtSecret: boolean;
+    httpStatus?: number;
+  };
+
+  const [setup, { refetch: refetchSetup }] = createResource(async (): Promise<SetupStatus> => {
     try {
       const res = await fetch("/api/setup/status");
-      if (!res.ok) throw new Error(String(res.status));
-      return (await res.json()) as { initialized: boolean; allowRegister: boolean };
+      if (!res.ok) {
+        return {
+          ok: false,
+          initialized: false,
+          allowRegister: false,
+          schemaReady: false,
+          hasJwtSecret: false,
+          httpStatus: res.status,
+        };
+      }
+      const data = (await res.json()) as {
+        initialized?: boolean;
+        allowRegister?: boolean;
+        schemaReady?: boolean;
+        hasJwtSecret?: boolean;
+      };
+      return {
+        ok: true,
+        initialized: Boolean(data.initialized),
+        allowRegister: Boolean(data.allowRegister),
+        schemaReady: data.schemaReady !== false,
+        hasJwtSecret: data.hasJwtSecret !== false,
+      };
     } catch {
-      return { initialized: true, allowRegister: false };
+      return {
+        ok: false,
+        initialized: false,
+        allowRegister: false,
+        schemaReady: false,
+        hasJwtSecret: false,
+      };
     }
   });
 
@@ -89,36 +125,87 @@ function GuestView() {
     }
   };
 
+  const setupErrorReason = () => {
+    const s = setup();
+    if (!s) return "";
+    if (!s.ok) {
+      return s.httpStatus
+        ? `后端服务检测失败（HTTP ${s.httpStatus}），请检查 Worker 绑定（DB / R2 / Queue / DO）和部署日志。`
+        : "无法连接后端 `/api/setup/status`，请稍后重试。";
+    }
+    if (!s.schemaReady) {
+      return "D1 数据库尚未初始化表结构（未执行迁移）。请在 Workers Builds 的 Deploy command 中改为 `bun run deploy`，或执行 `npx wrangler d1 migrations apply DB --remote`。";
+    }
+    if (!s.hasJwtSecret) {
+      return "尚未配置 `JWT_SECRET` Secret。请在 Cloudflare Worker 的 Settings → Variables and Secrets 中添加 `JWT_SECRET` 后重新部署或刷新。";
+    }
+    return "";
+  };
+
   return (
     <div class="relative h-dvh w-full">
       <Show
-        when={setup.state === "ready" && setup()?.initialized === false}
+        when={!setup.loading}
         fallback={
           <div class="flex h-dvh w-full items-center justify-center p-6">
-            <Show
-              when={tab() === "login"}
-              fallback={
-                <RegisterCard
-                  onRegister={register}
-                  domains={domains() || []}
-                  onGoLogin={() => setTab("login")}
-                  loading={loading()}
-                  error={error()}
-                />
-              }
-            >
-              <LoginCard
-                onLogin={login}
-                showRegister={Boolean(setup()?.allowRegister)}
-                onGoRegister={() => setTab("register")}
-                loading={loading()}
-                error={error()}
-              />
-            </Show>
+            <div class="glass-panel rounded-2xl px-6 py-4 text-sm text-[var(--text-secondary)]">
+              正在检查服务状态…
+            </div>
           </div>
         }
       >
-        <SetupView onInitialized={(user) => app.login(user)} />
+        <Show
+          when={!setupErrorReason()}
+          fallback={
+            <div class="flex h-dvh w-full items-center justify-center p-6">
+              <div class="glass-panel w-full max-w-lg rounded-2xl p-6 space-y-4">
+                <div class="text-base font-semibold text-[var(--text-primary)]">服务尚未就绪</div>
+                <div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-[var(--text-primary)]">
+                  {setupErrorReason()}
+                </div>
+                <div class="flex items-center justify-end">
+                  <button
+                    type="button"
+                    class="rounded-xl bg-[var(--accent)] px-4 py-2 text-xs font-medium text-white transition hover:opacity-90"
+                    onClick={() => void refetchSetup()}
+                  >
+                    重新检测
+                  </button>
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <Show
+            when={setup()?.initialized === false}
+            fallback={
+              <div class="flex h-dvh w-full items-center justify-center p-6">
+                <Show
+                  when={tab() === "login"}
+                  fallback={
+                    <RegisterCard
+                      onRegister={register}
+                      domains={domains() || []}
+                      onGoLogin={() => setTab("login")}
+                      loading={loading()}
+                      error={error()}
+                    />
+                  }
+                >
+                  <LoginCard
+                    onLogin={login}
+                    showRegister={Boolean(setup()?.allowRegister)}
+                    onGoRegister={() => setTab("register")}
+                    loading={loading()}
+                    error={error()}
+                  />
+                </Show>
+              </div>
+            }
+          >
+            <SetupView onInitialized={(user) => app.login(user)} />
+          </Show>
+        </Show>
       </Show>
       <div class="fixed bottom-6 left-6 z-40">
         <ThemeSwitcher />

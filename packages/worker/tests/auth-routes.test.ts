@@ -125,3 +125,50 @@ test("login is refused when the instance is not initialized", async () => {
   expect(res?.status).toBe(409);
   expect(((await res!.json()) as { error: string }).error).toBe("not_initialized");
 });
+
+test("/api/setup/status reports unmigrated schema instead of throwing 500", async () => {
+  const { env } = createEnv(await hashPassword("pw"));
+  env.DB = {
+    prepare() {
+      const stmt = {
+        bind: () => stmt,
+        first: async () => {
+          throw new Error("D1_ERROR: no such table: users");
+        },
+      };
+      return stmt;
+    },
+  } as any;
+  const req = new Request("https://mail.example.com/api/setup/status", { method: "GET" });
+  const res = await handlePublicRoutes(req, env, new URL(req.url), "/api/setup/status");
+  expect(res?.status).toBe(200);
+  expect((await res!.json()) as Record<string, unknown>).toEqual({
+    initialized: false,
+    allowRegister: false,
+    schemaReady: false,
+    hasJwtSecret: true,
+  });
+});
+
+test("/api/setup/status reports schemaReady and hasJwtSecret accurately", async () => {
+  const { env } = createEnv(await hashPassword("pw"));
+  env.JWT_SECRET = "";
+  env.DB = {
+    prepare() {
+      const stmt = {
+        bind: () => stmt,
+        first: async () => null,
+      };
+      return stmt;
+    },
+  } as any;
+  const req = new Request("https://mail.example.com/api/setup/status", { method: "GET" });
+  const res = await handlePublicRoutes(req, env, new URL(req.url), "/api/setup/status");
+  expect(res?.status).toBe(200);
+  expect((await res!.json()) as Record<string, unknown>).toEqual({
+    initialized: false,
+    allowRegister: false,
+    schemaReady: true,
+    hasJwtSecret: false,
+  });
+});

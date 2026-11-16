@@ -11,9 +11,17 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
   }
 
   if (pathname === "/api/setup/status" && request.method === "GET") {
-    const initialized = await S.isInitialized(env);
-    const allowRegister = initialized ? (await S.getSetting(env, "allow_register")) === "1" : false;
-    return json({ initialized, allowRegister });
+    const hasJwtSecret = S.hasJwtSecret(env);
+    try {
+      const initialized = await S.isInitialized(env);
+      const allowRegister = initialized ? (await S.getSetting(env, "allow_register")) === "1" : false;
+      return json({ initialized, allowRegister, schemaReady: true, hasJwtSecret });
+    } catch (err) {
+      if (S.isDbSchemaError(err)) {
+        return json({ initialized: false, allowRegister: false, schemaReady: false, hasJwtSecret });
+      }
+      throw err;
+    }
   }
 
   if (pathname === "/api/turnstile/config" && request.method === "GET") {
