@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SHELL = process.env.ComSpec || "cmd.exe";
@@ -46,15 +46,54 @@ export function wranglerEnv(workerRoot: string) {
  * Paths are kept relative and ASCII-only: `cmd.exe` mangles non-ASCII paths such as
  * this repo's `项目` directory, and a literal quoted `--cwd` is taken verbatim.
  */
-export function wranglerCommand(args: string[]) {
-  return `bunx wrangler@${WRANGLER_VERSION} --cwd ${REL_PROJECT_ROOT} ${args.join(" ")}`;
+export function prepareLocalWranglerConfig(workerRoot: string) {
+  const rootConfigPath = resolve(workerRoot, "../../wrangler.jsonc");
+  const raw = readFileSync(rootConfigPath, "utf8");
+  if (/"database_id"\s*:/.test(raw)) {
+    return null;
+  }
+  const stripped = raw
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const parsed = JSON.parse(stripped) as Record<string, unknown>;
+  const prefix = "../../../";
+  if (typeof parsed.main === "string") {
+    parsed.main = `${prefix}${parsed.main}`;
+  }
+  if (parsed.assets && typeof parsed.assets === "object" && typeof (parsed.assets as Record<string, unknown>).directory === "string") {
+    (parsed.assets as Record<string, unknown>).directory = `${prefix}${(parsed.assets as Record<string, unknown>).directory}`;
+  }
+  if (Array.isArray(parsed.d1_databases)) {
+    for (const db of parsed.d1_databases) {
+      if (db && typeof db === "object") {
+        const entry = db as Record<string, unknown>;
+        if (!entry.database_id) {
+          entry.database_id = "00000000-0000-0000-0000-000000000000";
+        }
+        if (typeof entry.migrations_dir === "string") {
+          entry.migrations_dir = `${prefix}${entry.migrations_dir}`;
+        }
+      }
+    }
+  }
+  delete parsed.$schema;
+  const localConfigPath = resolve(workerRoot, ".wrangler-xdg/wrangler.local.jsonc");
+  mkdirSync(resolve(workerRoot, ".wrangler-xdg"), { recursive: true });
+  writeFileSync(localConfigPath, JSON.stringify(parsed, null, 2), "utf8");
+  return "packages/worker/.wrangler-xdg/wrangler.local.jsonc";
+}
+
+export function wranglerCommand(args: string[], configRelPath?: string | null) {
+  const configArg = configRelPath ? `--config ${configRelPath} ` : "";
+  return `bunx wrangler@${WRANGLER_VERSION} --cwd ${REL_PROJECT_ROOT} ${configArg}${args.join(" ")}`;
 }
 
 export async function runWrangler(
   args: string[],
   options: { cwd: string; env: Record<string, string | undefined> },
 ) {
-  const proc = Bun.spawn([SHELL, "/c", wranglerCommand(args)], {
+  const configRelPath = prepareLocalWranglerConfig(options.cwd);
+  const proc = Bun.spawn([SHELL, "/c", wranglerCommand(args, configRelPath)], {
     cwd: options.cwd,
     env: options.env,
     stdout: "pipe",

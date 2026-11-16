@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { REL_PROJECT_ROOT, WRANGLER_VERSION, wranglerEnv } from "./wrangler-env";
+import { prepareLocalWranglerConfig, wranglerCommand, wranglerEnv } from "./wrangler-env";
 
 const WORKER_ROOT = resolve(import.meta.dir, "..");
 const env = wranglerEnv(WORKER_ROOT);
@@ -16,7 +16,8 @@ await new Promise<void>((resolvePromise) => {
 
 // `cmd /c` + pinned version + relative ASCII path: the only invocation that keeps
 // workerd alive in this environment (see scripts/wrangler-env.ts).
-const command = `bunx wrangler@${WRANGLER_VERSION} dev --local --port 8788 --cwd ${REL_PROJECT_ROOT}`;
+const configRelPath = prepareLocalWranglerConfig(WORKER_ROOT);
+const command = wranglerCommand(["dev", "--local", "--port", "8788"], configRelPath);
 console.log(`\nstarting worker: ${command}  (from packages/worker)\n`);
 const child = spawn(process.env.ComSpec || "cmd.exe", ["/c", command], {
   cwd: WORKER_ROOT,

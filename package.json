@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "bun install --cwd packages/worker --backend=copyfile && bun install --cwd apps/web --backend=copyfile && bun run build:web",
-    "deploy": "bun run db:migrations:apply && bun run deploy:worker",
+    "deploy": "npx wrangler deploy && npx wrangler d1 migrations apply DB --remote",
     "dev:worker": "bun --cwd packages/worker dev",
     "deploy:worker": "bun --cwd packages/worker deploy",
     "dev:web": "bun --cwd apps/web dev",

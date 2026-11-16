@@ -45,7 +45,6 @@
     {
       "binding": "DB",
       "database_name": "bingmail",
-      "database_id": "REPLACE_ME",
       "migrations_dir": "packages/db/migrations",
       "migrations_table": "__bingmail_migrations"
     }
