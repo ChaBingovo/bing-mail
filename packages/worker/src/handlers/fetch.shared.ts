@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { json } from "../http";
 import { getBearerToken, passwordVersionMatches, verifyJwt, type JwtPayload } from "../auth";
+import { normalizeSendProvider, type SendProvider } from "../outbound";
 
 export function isUniqueViolation(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
@@ -75,6 +76,19 @@ export function getNumberField(body: unknown, key: string) {
   const v = r[key];
   if (typeof v !== "number") return null;
   return v;
+}
+
+/** Parses an optional `sendProvider` field, returning whether it was explicitly provided. */
+export function parseOptionalSendProvider(
+  body: unknown,
+  fallback: SendProvider | null = "none",
+): { provided: boolean; value: SendProvider | null } {
+  const rec = asRecord(body);
+  const raw = rec ? rec["sendProvider"] : undefined;
+  if (raw === undefined || raw === null) {
+    return { provided: false, value: fallback };
+  }
+  return { provided: true, value: normalizeSendProvider(raw) };
 }
 
 export function toUsername(body: unknown) {

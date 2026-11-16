@@ -172,3 +172,38 @@ test("/api/setup/status reports schemaReady and hasJwtSecret accurately", async 
     hasJwtSecret: false,
   });
 });
+
+test("/api/setup/domains defaults omitted sendProvider to none and rejects invalid values", async () => {
+  const { env } = createEnv(await hashPassword("pw"));
+  env.DB = {
+    prepare() {
+      const stmt = {
+        bind: () => stmt,
+        first: async () => null,
+        run: async () => ({ success: true, meta: {} }),
+      };
+      return stmt;
+    },
+  } as any;
+
+  const okReq = new Request("https://mail.example.com/api/setup/domains", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ domain: "example.com" }),
+  });
+  const okRes = await handlePublicRoutes(okReq, env, new URL(okReq.url), "/api/setup/domains");
+  expect(okRes?.status).toBe(200);
+  expect((await okRes!.json()) as Record<string, unknown>).toEqual({
+    domain: "example.com",
+    sendProvider: "none",
+  });
+
+  const badReq = new Request("https://mail.example.com/api/setup/domains", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ domain: "example.com", sendProvider: 123 }),
+  });
+  const badRes = await handlePublicRoutes(badReq, env, new URL(badReq.url), "/api/setup/domains");
+  expect(badRes?.status).toBe(400);
+  expect((await badRes!.json()) as Record<string, unknown>).toEqual({ error: "invalid_send_provider" });
+});

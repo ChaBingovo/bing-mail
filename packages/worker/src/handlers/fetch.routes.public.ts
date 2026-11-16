@@ -40,13 +40,13 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain = S.normalizeDomain(S.getStringField(body, "domain") || "");
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
-    const rawProvider = S.getStringField(body, "sendProvider");
-    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : "none";
-    if (!sendProvider) return json({ error: "invalid_send_provider" }, { status: 400 });
+    const parsedProvider = S.parseOptionalSendProvider(body, "none");
+    if (!parsedProvider.value) return json({ error: "invalid_send_provider" }, { status: 400 });
+    const sendProvider = parsedProvider.value;
     await env.DB.prepare(
       "INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3) ON CONFLICT(domain) DO UPDATE SET send_provider = CASE WHEN ?4 = 1 THEN excluded.send_provider ELSE domains.send_provider END",
     )
-      .bind(crypto.randomUUID(), domain, sendProvider, rawProvider !== undefined ? 1 : 0)
+      .bind(crypto.randomUUID(), domain, sendProvider, parsedProvider.provided ? 1 : 0)
       .run();
     return json({ domain, sendProvider });
   }
@@ -116,11 +116,11 @@ export async function handlePublicRoutes(request: Request, env: Env, url: URL, p
       .bind(now)
       .run();
 
-    const rawProvider = S.getStringField(body, "sendProvider");
-    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : null;
-    if (rawProvider !== undefined && !sendProvider) {
+    const parsedProvider = S.parseOptionalSendProvider(body, null);
+    if (parsedProvider.provided && !parsedProvider.value) {
       return json({ error: "invalid_send_provider" }, { status: 400 });
     }
+    const sendProvider = parsedProvider.value;
 
     await env.DB.prepare(
       "INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3) ON CONFLICT(domain) DO UPDATE SET send_provider = CASE WHEN ?4 = 1 THEN excluded.send_provider ELSE domains.send_provider END",

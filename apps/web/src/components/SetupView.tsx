@@ -313,12 +313,6 @@ export function SetupView(props: {
               </div>
             </div>
 
-          <Show when={error()}>
-            <div class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-              {error()}
-            </div>
-          </Show>
-
           <button
             disabled={loading()}
             class="w-full rounded-md bg-indigo-500/15 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-60"
@@ -332,6 +326,12 @@ export function SetupView(props: {
           >
             上一步
           </button>
+          </Show>
+
+          <Show when={error()}>
+            <div class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {error()}
+            </div>
           </Show>
         </div>
       </div>

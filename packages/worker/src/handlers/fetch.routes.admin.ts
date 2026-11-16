@@ -131,9 +131,9 @@ export async function handleAdminRoutes(request: Request, env: Env, pathname: st
     if (!body) return json({ error: "invalid_json" }, { status: 400 });
     const domain = S.normalizeDomain(S.getLowerStringField(body, "domain") || "");
     if (!S.isValidDomain(domain)) return json({ error: "invalid_domain" }, { status: 400 });
-    const rawProvider = S.getStringField(body, "sendProvider");
-    const sendProvider = rawProvider !== undefined ? normalizeSendProvider(rawProvider) : "none";
-    if (!sendProvider) return json({ error: "invalid_send_provider" }, { status: 400 });
+    const parsedProvider = S.parseOptionalSendProvider(body, "none");
+    if (!parsedProvider.value) return json({ error: "invalid_send_provider" }, { status: 400 });
+    const sendProvider = parsedProvider.value;
     const id = crypto.randomUUID();
     try {
       await env.DB.prepare("INSERT INTO domains (id, domain, is_active, send_provider) VALUES (?1, ?2, 1, ?3)")
