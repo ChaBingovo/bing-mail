@@ -276,6 +276,24 @@ export function UserSettingsView(props: { user: AuthUser; api: ApiClient }) {
             </button>
           </div>
         </div>
+
+        <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div class="text-sm font-semibold text-zinc-100">第三方组件与字体声明</div>
+          <div class="mt-3 space-y-2 text-xs leading-relaxed text-zinc-400">
+            <p>
+              界面字体为 <span class="text-zinc-200">Noto Sans SC</span>（SIL Open Font License 1.1），
+              经 Google Fonts 引入；网络不可达时自动回退到系统字体。
+            </p>
+            <p>
+              其余第三方组件均以宽松许可证分发：SolidJS（MIT）、DOMPurify（Apache-2.0）、
+              drizzle-orm（Apache-2.0）、postal-mime（MIT-0）。完整版权声明与许可证全文见仓库根目录的
+              <code class="mx-1 rounded bg-white/10 px-1 py-0.5 text-zinc-300">THIRD-PARTY-NOTICES.md</code>。
+            </p>
+            <p>
+              本应用自身以 <span class="text-zinc-200">MIT</span> 许可证开源。
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

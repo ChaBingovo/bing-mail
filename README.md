@@ -242,3 +242,12 @@ bunx wrangler secret put JWT_SECRET
 - **本地开发变量（`.dev.vars`）与后台设置表（`app_settings`）**：
   - 本地开发在根目录创建 `.dev.vars`（至少包含 `JWT_SECRET=dev-secret`，其余 `TURNSTILE_MODE=off` 等见 [docs/quickstart.md](./docs/quickstart.md)）。
   - 注册开关 `allow_register`、每号最大别名数 `max_aliases`、保留天数 `retention_days` 等运行期配置存储在 D1 `app_settings` 表中，直接通过网页管理后台修改即可。
+
+---
+
+## 许可证
+
+- 本项目自身以 **MIT** 许可证发布，全文见 [LICENSE](./LICENSE)。
+- 第三方组件与字体的版权声明、许可证全文见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
+- 界面字体为 **Noto Sans SC**（SIL OFL 1.1），经 Google Fonts 以外部样式表引入；本项目**不分发任何字体文件**。若外部字体不可达，会自动回退到系统字体。若部署环境无法访问 `fonts.googleapis.com`，可把 `apps/web/index.html` 中的地址替换为 `fonts.googleapis.cn`，或下载字体自行托管（OFL 1.1 允许再分发，但需随附许可证全文）。
+- 许可证审计过程与依赖清单见 [docs/license-audit.md](./docs/license-audit.md)。

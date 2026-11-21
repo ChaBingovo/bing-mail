@@ -1,6 +1,7 @@
 {
   "name": "bingmail",
   "private": true,
+  "license": "MIT",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260525.0",
     "drizzle-kit": "^0.31.4",

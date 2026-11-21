@@ -121,7 +121,7 @@ export function markdownToEmailHtml(markdown: string, opts: { variant?: "reader"
   const quoteBorder = variant === "outbound" ? "rgba(127,127,127,.35)" : "rgba(255,255,255,.22)";
 
   const css = `
-article{font-family:"MiSans",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";font-size:14px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word}
+article{font-family:"Noto Sans SC",ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";font-size:14px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word}
 pre{padding:12px;border-radius:12px;background:${preBg};border:1px solid ${preBorder};overflow:auto}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
 blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid ${quoteBorder};opacity:.85}

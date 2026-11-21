@@ -4,6 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bingmail</title>
+
+    <!--
+      字体：Noto Sans SC（SIL OFL 1.1），经 Google Fonts 引入。
+      - preconnect 提前完成 DNS/TLS 握手；
+      - 样式表用 media="print" + onload 切回 all，避免外链阻塞首屏
+        （在 fonts.googleapis.com 不可达的网络下不会白屏，直接回退系统字体）；
+      - display=swap 见 URL 参数，避免文字长时间不可见。
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      />
+    </noscript>
     <script>
       (function () {
         try {

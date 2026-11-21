@@ -6,8 +6,6 @@ dist
 .env.*
 .dev.vars
 .dev.vars.*
-bun.lock
-bun.lockb
 agenta.md
 AGENTS.md
 dev/
